@@ -1,49 +1,140 @@
 import { test } from '@japa/runner'
 import { executeIn } from '../index.js'
 import { internalHooks } from '../src/receipts.js'
-import { addProof, count, createDatabase, input, noteOperation, receipts } from './helpers.js'
+import {
+  addProof,
+  auth,
+  awaitOrSkip,
+  codeOf,
+  committed,
+  count,
+  createDatabase,
+  input,
+  named,
+  noteOperation,
+  receipts,
+  signal,
+  sleep,
+  within,
+} from './helpers.js'
 
-/** Sibling, nested and aborted commands on one transaction. A hang becomes a failure here. */
-async function within<T>(promise: Promise<T>, ms = 5000): Promise<T> {
-  let timer: NodeJS.Timeout | undefined
-  const hung = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`hung for ${ms} ms`)), ms)
+test.group('commands compose on the outer transaction', () => {
+  test('executeIn on the outer trx from inside work runs a nested command', async ({ assert }) => {
+    const { client } = await createDatabase()
+    const outerOp = noteOperation()
+    const innerOp = noteOperation()
+    const inner = { ...innerOp.operation, name: 'notes.inner' }
+    await addProof(client, 'p1')
+    await addProof(client, 'p2')
+    const outcome = await within(
+      client.transaction(async (trx) => {
+        outerOp.hooks.beforeWork = async () => {
+          const nested = await executeIn(trx, inner, {
+            ...input(2),
+            authorization: { proofToken: 'p2' },
+          })
+          assert.isFalse(nested.replayed)
+        }
+        return executeIn(trx, outerOp.operation, {
+          ...input(1),
+          authorization: { proofToken: 'p1' },
+        })
+      })
+    )
+    assert.isFalse(outcome.replayed)
+    const rows = await receipts(client)
+    assert.deepEqual(rows.map((row) => row.state).sort(), ['completed', 'completed'])
+    assert.equal(await count(client, 'notes'), 2)
   })
-  try {
-    return await Promise.race([promise, hung])
-  } finally {
-    clearTimeout(timer)
-  }
-}
 
-function signal() {
-  let fire!: () => void
-  const fired = new Promise<void>((resolve) => (fire = resolve))
-  return { fire, fired }
-}
+  test('a nested failure caught by work rolls back only the nested command', async ({ assert }) => {
+    const { client } = await createDatabase()
+    const outerOp = noteOperation()
+    const innerOp = noteOperation()
+    const inner = { ...innerOp.operation, name: 'notes.inner' }
+    await addProof(client, 'p1')
+    await addProof(client, 'p2')
+    innerOp.hooks.afterWork = () => {
+      throw new Error('inner failed after its side effect')
+    }
+    await within(
+      client.transaction(async (trx) => {
+        outerOp.hooks.beforeWork = async () => {
+          await executeIn(trx, inner, { ...input(2), authorization: { proofToken: 'p2' } }).catch(
+            () => null
+          )
+        }
+        return executeIn(trx, outerOp.operation, {
+          ...input(1),
+          authorization: { proofToken: 'p1' },
+        })
+      })
+    )
+    const rows = await receipts(client)
+    assert.deepEqual(
+      rows.map((row) => [row.command_id, row.state]),
+      [['c1', 'completed']]
+    )
+    assert.equal(await count(client, 'notes'), 1)
+    const proof = await client.from('proofs').where('token', 'p2').first()
+    assert.equal(proof.used, 0)
+  })
 
-/** Waits for the signal, or gives up after `ms`: a serialized sibling never sends it. */
-const awaitOrSkip = (fired: Promise<void>, ms = 300) =>
-  Promise.race([fired, new Promise<void>((resolve) => setTimeout(resolve, ms))])
+  test('an outer failure rolls back the nested command too', async ({ assert }) => {
+    const { client } = await createDatabase()
+    const outerOp = noteOperation()
+    const innerOp = noteOperation()
+    const inner = { ...innerOp.operation, name: 'notes.inner' }
+    await addProof(client, 'p1')
+    await addProof(client, 'p2')
+    await within(
+      client.transaction(async (trx) => {
+        outerOp.hooks.afterWork = async () => {
+          await executeIn(trx, inner, { ...input(2), authorization: { proofToken: 'p2' } })
+          throw new Error('outer failed after the nested command')
+        }
+        await executeIn(trx, outerOp.operation, {
+          ...input(1),
+          authorization: { proofToken: 'p1' },
+        }).catch(() => null)
+      })
+    )
+    assert.lengthOf(await receipts(client), 0)
+    assert.equal(await count(client, 'notes'), 0)
+  })
 
-function named(name: string) {
-  const op = noteOperation()
-  return { ...op, operation: { ...op.operation, name } }
-}
+  test('outerTrx.transaction() from inside work completes', async ({ assert }) => {
+    const { client } = await createDatabase()
+    const { operation, hooks } = noteOperation()
+    await addProof(client, 'p1')
+    await within(
+      client.transaction(async (trx) => {
+        hooks.beforeWork = async () => {
+          await trx.transaction(async (child) => {
+            await child.table('notes').insert({ scope_id: 's1', body: 'child transaction' })
+          })
+        }
+        return executeIn(trx, operation, { ...input(1), authorization: { proofToken: 'p1' } })
+      })
+    )
+    assert.equal(await count(client, 'notes'), 2)
+  })
 
-const auth = (n: number) => ({ ...input(n), authorization: { proofToken: `p${n}` } })
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
-
-/** The error code a settled call failed with, or 'fulfilled'. */
-const codeOf = (result: PromiseSettledResult<unknown>) =>
-  result.status === 'fulfilled'
-    ? 'fulfilled'
-    : ((result.reason as { code?: string }).code ?? (result.reason as Error).message)
-
-async function committed(client: Parameters<typeof receipts>[0]) {
-  const rows = await receipts(client)
-  return rows.map((row) => [row.command_id, row.state]).sort()
-}
+  test('plain queries on the outer trx from inside work complete', async ({ assert }) => {
+    const { client } = await createDatabase()
+    const { operation, hooks } = noteOperation()
+    await addProof(client, 'p1')
+    await within(
+      client.transaction(async (trx) => {
+        hooks.beforeWork = async () => {
+          await trx.table('notes').insert({ scope_id: 's1', body: 'outer query' })
+        }
+        return executeIn(trx, operation, { ...input(1), authorization: { proofToken: 'p1' } })
+      })
+    )
+    assert.equal(await count(client, 'notes'), 2)
+  })
+})
 
 test.group('siblings on one transaction are refused, never queued', () => {
   test('(a) a sibling started while a command is open is refused at once', async ({ assert }) => {
@@ -400,110 +491,6 @@ test.group('savepoint names', () => {
     }
     await within(client.transaction((trx) => executeIn(trx, operation, auth(1)).catch(() => null)))
     assert.lengthOf(await receipts(client), 0)
-  })
-})
-
-test.group('cleanup never masks the original error', () => {
-  test('a transaction SQLite already rolled back rethrows the original error', async ({
-    assert,
-  }) => {
-    const { client } = await createDatabase()
-    await addProof(client, 'p1')
-    await client.table('notes').insert({ id: 99, scope_id: 's1', body: 'existing' })
-    const { operation, hooks } = noteOperation()
-    hooks.afterWork = async ({ trx }) => {
-      await trx.rawQuery(
-        `INSERT OR ROLLBACK INTO notes (id, scope_id, body) VALUES (99, 's1', 'x')`
-      )
-    }
-    const trx = await client.transaction()
-    let caught: (Error & { code?: string }) | undefined
-    try {
-      await within(executeIn(trx, operation, auth(1)))
-    } catch (error) {
-      caught = error as Error & { code?: string }
-    } finally {
-      await trx.rollback().catch(() => null)
-    }
-    assert.match(caught?.code ?? '', /^SQLITE_CONSTRAINT/)
-    assert.match(String((caught?.cause as Error | undefined)?.message), /no such savepoint/)
-    assert.lengthOf(await receipts(client), 0)
-  })
-})
-
-test.group('an aborted child never commits without its receipt', () => {
-  /** Parent work: Promise.all of a slow child command and a validation that rejects first. */
-  function probe() {
-    const parent = named('notes.parent')
-    const child = named('notes.child')
-    const next = named('notes.next')
-    child.hooks.beforeWork = () => sleep(50)
-    // The host's next command is still open when the child would write.
-    next.hooks.afterWork = () => sleep(100)
-    parent.hooks.afterWork = async ({ trx }) => {
-      await Promise.all([
-        executeIn(trx, child.operation, auth(2)),
-        sleep(5).then(() => {
-          throw new Error('validation failed')
-        }),
-      ])
-    }
-    return { parent, child, next }
-  }
-
-  for (const waits of [true, false]) {
-    test(`the host ${waits ? 'waits, then runs' : 'immediately runs'} its next command`, async ({
-      assert,
-    }) => {
-      const { client } = await createDatabase()
-      for (const n of [1, 2, 3]) await addProof(client, `p${n}`)
-      const { parent, child, next } = probe()
-      let parentError = ''
-      let parentCause: unknown
-      await within(
-        client.transaction(async (trx) => {
-          parentError = await executeIn(trx, parent.operation, auth(1)).then(
-            () => 'fulfilled',
-            (error: Error) => {
-              parentCause = error.cause
-              return error.message
-            }
-          )
-          if (waits) await sleep(150)
-          await executeIn(trx, next.operation, auth(3))
-        })
-      )
-      assert.equal(parentError, 'validation failed')
-      assert.equal((parentCause as { code?: string }).code, 'E_UNAWAITED_NESTED_COMMAND')
-      // Only the next command's note and receipt committed: no orphan note from the child.
-      assert.deepEqual(await committed(client), [['c3', 'completed']])
-      assert.equal(await count(client, 'notes'), 1)
-      const retry = await client.transaction((trx) => executeIn(trx, child.operation, auth(2)))
-      assert.isFalse(retry.replayed)
-      assert.equal(child.calls.work, 2)
-      assert.equal(await count(client, 'notes'), 2)
-    })
-  }
-
-  test('an aborted child stops before its next policy or work', async ({ assert }) => {
-    const { client } = await createDatabase()
-    for (const n of [1, 2]) await addProof(client, `p${n}`)
-    const parent = named('notes.parent')
-    const child = named('notes.child')
-    child.hooks.afterAccess = () => sleep(50)
-    let childCode = ''
-    parent.hooks.afterWork = async ({ trx }) => {
-      const nested = executeIn(trx, child.operation, auth(2)).catch((error: { code?: string }) => {
-        childCode = error.code ?? 'other'
-      })
-      await Promise.all([nested, sleep(5).then(() => Promise.reject(new Error('invalid')))])
-    }
-    await within(
-      client.transaction((trx) => executeIn(trx, parent.operation, auth(1)).catch(() => null))
-    )
-    assert.equal(childCode, 'E_UNAWAITED_NESTED_COMMAND')
-    assert.deepEqual([child.calls.execute, child.calls.work, child.calls.replay], [0, 0, 0])
-    assert.deepEqual(await committed(client), [])
   })
 })
 

@@ -170,3 +170,45 @@ export const count = async (client: QueryClientContract, table: string) => {
 }
 
 export { errors }
+
+/** Fails a test that would otherwise hang: the promise, or an error after `ms`. */
+export async function within<T>(promise: Promise<T>, ms = 5000): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  const hung = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`hung for ${ms} ms`)), ms)
+  })
+  try {
+    return await Promise.race([promise, hung])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export function signal() {
+  let fire!: () => void
+  const fired = new Promise<void>((resolve) => (fire = resolve))
+  return { fire, fired }
+}
+
+/** Waits for the signal, or gives up after `ms`: a serialized sibling never sends it. */
+export const awaitOrSkip = (fired: Promise<void>, ms = 300) =>
+  Promise.race([fired, new Promise<void>((resolve) => setTimeout(resolve, ms))])
+
+export function named(name: string) {
+  const op = noteOperation()
+  return { ...op, operation: { ...op.operation, name } }
+}
+
+export const auth = (n: number) => ({ ...input(n), authorization: { proofToken: `p${n}` } })
+export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+/** The error code a settled call failed with, or 'fulfilled'. */
+export const codeOf = (result: PromiseSettledResult<unknown>) =>
+  result.status === 'fulfilled'
+    ? 'fulfilled'
+    : ((result.reason as { code?: string }).code ?? (result.reason as Error).message)
+
+export async function committed(client: Parameters<typeof receipts>[0]) {
+  const rows = await receipts(client)
+  return rows.map((row) => [row.command_id, row.state]).sort()
+}
