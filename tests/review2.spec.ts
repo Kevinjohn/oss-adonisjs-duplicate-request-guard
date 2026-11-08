@@ -17,7 +17,7 @@ import {
   receipts,
 } from './helpers.js'
 
-/** Each group answers one finding of the 2026-11-07 re-review. A hang becomes a failure here. */
+/** Composition on the outer transaction, shared-file detection, value edges. A hang fails here. */
 async function within<T>(promise: Promise<T>, ms = 3000): Promise<T> {
   let timer: NodeJS.Timeout | undefined
   const hung = new Promise<never>((_, reject) => {
@@ -44,7 +44,7 @@ function sqliteDatabase(filename: string) {
   )
 }
 
-test.group('re-review P2: commands compose on the outer transaction', () => {
+test.group('commands compose on the outer transaction', () => {
   test('executeIn on the outer trx from inside work runs a nested command', async ({ assert }) => {
     const { client } = await createDatabase()
     const outerOp = noteOperation()
@@ -162,7 +162,7 @@ test.group('re-review P2: commands compose on the outer transaction', () => {
   })
 })
 
-test.group('re-review P3: shared SQLite file detection', () => {
+test.group('shared SQLite file detection', () => {
   test('a closed connection releases its file', async ({ assert }) => {
     const { db, file } = await createDatabase()
     db.manager.add('first', { client: 'better-sqlite3', connection: { filename: file } })
@@ -258,7 +258,7 @@ test.group('re-review P3: shared SQLite file detection', () => {
   })
 })
 
-test.group('re-review P3: schema and value edges', () => {
+test.group('schema and value edges', () => {
   test('a receipts table from the old stub gives a typed error, not a TypeError', async ({
     assert,
   }) => {

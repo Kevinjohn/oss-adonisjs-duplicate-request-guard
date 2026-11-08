@@ -22,7 +22,7 @@ export default [
     },
   },
   {
-    files: ['src/receipts.ts', 'src/bindings/**/*.ts', 'src/mixin.ts', 'src/guard.ts'],
+    files: ['index.ts', 'configure.ts', 'src/**/*.ts'],
     rules: {
       'no-restricted-syntax': [
         'error',

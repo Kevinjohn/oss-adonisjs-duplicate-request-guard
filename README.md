@@ -17,8 +17,8 @@ node ace configure @kevinjohn/adonisjs-duplicate-request-guard   # publishes the
 node ace migration:run
 ```
 
-Peers: `@adonisjs/core` ^7.0.0, `@adonisjs/lucid` ^22.0.0. Node >= 24. Each release lists its archive's
-SHA-256.
+Peers: `@adonisjs/core` ^7.0.0, `@adonisjs/lucid` ^22.0.0. Node >= 24. Each release lists its
+archive's SHA-256.
 
 ## Use
 
@@ -54,15 +54,15 @@ return execute(db.connection(), addNote, {
 ```
 
 Order: `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh: `parseAuthorization` →
-`authorizeExecute` → `work` → complete. Completion updates only a `pending` row and requires exactly one.
+`authorizeExecute` → `work` → complete. Completion updates only a `pending` row and requires
+exactly one.
 
 For commands without authorization, only `name`, `authorizeAccess` and `work` are required.
-Omitted `authorizeReplay` and
-`authorizeExecute` allow the corresponding path. An omitted `parseAuthorization` ignores the opaque
-input and passes `undefined` to `authorizeExecute` and `work`; use `undefined` for the operation
-authorization type when no parser is needed. If that type excludes `undefined`, the parser is
-required so callbacks receive the authorization their type promises. Supplied policies keep the
-order above and throw to refuse the command.
+Omitted `authorizeReplay` and `authorizeExecute` allow the corresponding path. An omitted
+`parseAuthorization` ignores the opaque input and passes `undefined` to `authorizeExecute` and
+`work`; use `undefined` for the operation authorization type when no parser is needed. If that type
+excludes `undefined`, the parser is required so callbacks receive the authorization their type
+promises. Supplied policies keep the order above and throw to refuse the command.
 
 ```ts
 const addPlainNote: Operation<{ body: string }, undefined, { noteId: number }> = {
@@ -78,8 +78,8 @@ const addPlainNote: Operation<{ body: string }, undefined, { noteId: number }> =
 
 - **Database.** better-sqlite3 only. Other dialects throw `E_UNSUPPORTED_DIALECT` before any query.
 - **Owners.** `execute` opens and commits its own transaction, once, without retrying. Inside a
-  transaction you own (for example Account Kit `withCurrent`), call `executeIn(trx, ...)`. The two are
-  mutually exclusive: `execute` rejects a transaction client, `executeIn` requires one. Wrapping
+  transaction you own (for example Account Kit `withCurrent`), call `executeIn(trx, ...)`. The two
+  are mutually exclusive: `execute` rejects a transaction client, `executeIn` requires one. Wrapping
   either in your own retry loop is unsupported.
 - **Savepoint.** Reservation and the fresh path run under a raw SQL savepoint on the caller's
   transaction, so `context.trx` is that same transaction. Commands compose: `work` may call
@@ -106,23 +106,24 @@ const addPlainNote: Operation<{ body: string }, undefined, { noteId: number }> =
 - **Original errors.** If SQLite already rolled back the whole transaction (`INSERT OR ROLLBACK`, a
   busy abort), the original error, such as `SQLITE_BUSY`, is rethrown; the failed savepoint cleanup
   is attached as its `cause` when it has none.
-- **Reruns and failures.** An owner may roll back and rerun the callback, so policies and `work` must
-  be database-only and safe to rerun. Any failure rolls the savepoint back, even when the host catches
-  it and commits. A failed fresh command leaves no pending receipt or partial work, so its identity
-  runs fresh next time. A refused replay preserves its completed receipt; a later permitted attempt
-  replays that result.
-- **SQLite writers.** better-sqlite3 waits for locks synchronously, so a second in-process writer stalls
-  the event loop. `E_UNSAFE_SQLITE_POOL` is thrown when `pool.max` is not 1 (the knex default), or when
-  a second open Lucid connection (any name, any Database instance, symlinks resolved) runs commands
-  on a file another open connection already used. Closing a connection releases its file; every
-  `:memory:` connection is its own database.
-  `executeIn` first takes the writer lock with a no-op update, so a commit by another process between
-  the access check and the reservation cannot fail the request with `SQLITE_BUSY_SNAPSHOT`.
-- **Plain JSON only.** Payloads and results must be plain objects (including null-prototype objects),
-  arrays, strings, finite numbers, booleans or null; shared references are fine, cycles are not. Anything else (Dates, Maps, BigInt, NaN, class instances, functions, cycles) is
-  refused before anything commits: `E_INVALID_COMMAND_VALUE` (400) for payloads, checked before
-  `authorizeAccess`,
-  `E_INVALID_COMMAND_RESULT` (500) for results. A replay returns JSON-equal data (-0 comes back as 0).
+- **Reruns and failures.** An owner may roll back and rerun the callback, so policies and `work`
+  must be database-only and safe to rerun. Any failure rolls the savepoint back, even when the host
+  catches it and commits. A failed fresh command leaves no pending receipt or partial work, so its
+  identity runs fresh next time. A refused replay preserves its completed receipt; a later permitted
+  attempt replays that result.
+- **SQLite writers.** better-sqlite3 waits for locks synchronously, so a second in-process writer
+  stalls the event loop. `E_UNSAFE_SQLITE_POOL` is thrown when `pool.max` is not 1 (the knex
+  default), or when a second open Lucid connection (any name, any Database instance, symlinks
+  resolved) runs commands on a file another open connection already used. Closing a connection
+  releases its file; every `:memory:` connection is its own database. `executeIn` first takes the
+  writer lock with a no-op update, so a commit by another process between the access check and the
+  reservation cannot fail the request with `SQLITE_BUSY_SNAPSHOT`.
+- **Plain JSON only.** Payloads and results must be plain objects (including null-prototype
+  objects), arrays, strings, finite numbers, booleans or null; shared references are fine, cycles
+  are not. Anything else (Dates, Maps, BigInt, NaN, class instances, functions, cycles) is refused
+  before anything commits: `E_INVALID_COMMAND_VALUE` (400) for payloads, checked before
+  `authorizeAccess`, `E_INVALID_COMMAND_RESULT` (500) for results. A replay returns JSON-equal data
+  (-0 comes back as 0).
 - **Identity scope.** Command ids and request keys are scoped to one actor's operation. Another
   actor using the same ids runs its own command and learns nothing about yours.
 - **Pruning.** `pruneReceipts(db.connection(), { olderThan })` deletes completed receipts updated

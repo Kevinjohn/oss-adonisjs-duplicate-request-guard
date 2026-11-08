@@ -292,7 +292,7 @@ async function runClaimed<Payload, Authorization, Result>(
 
   // A raw savepoint on the caller's transaction, not a knex child transaction: knex would make
   // every other use of `trx` (a nested executeIn, trx.transaction()) wait for the child, forever.
-  const savepoint = `idm_${randomUUID().replaceAll('-', '')}`
+  const savepoint = `drg_${randomUUID().replaceAll('-', '')}`
   assertLive(frame)
   await trx.rawQuery(`SAVEPOINT ${savepoint}`)
   try {

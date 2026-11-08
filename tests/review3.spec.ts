@@ -3,7 +3,7 @@ import { executeIn } from '../index.js'
 import { internalHooks } from '../src/receipts.js'
 import { addProof, count, createDatabase, input, noteOperation, receipts } from './helpers.js'
 
-/** Each test answers one finding of the third review. A hang becomes a failure here. */
+/** Sibling, nested and aborted commands on one transaction. A hang becomes a failure here. */
 async function within<T>(promise: Promise<T>, ms = 5000): Promise<T> {
   let timer: NodeJS.Timeout | undefined
   const hung = new Promise<never>((_, reject) => {
@@ -45,7 +45,7 @@ async function committed(client: Parameters<typeof receipts>[0]) {
   return rows.map((row) => [row.command_id, row.state]).sort()
 }
 
-test.group('fourth review: siblings on one transaction are refused, never queued', () => {
+test.group('siblings on one transaction are refused, never queued', () => {
   test('(a) a sibling started while a command is open is refused at once', async ({ assert }) => {
     const { client } = await createDatabase()
     for (const n of [1, 2]) await addProof(client, `p${n}`)
@@ -88,7 +88,7 @@ test.group('fourth review: siblings on one transaction are refused, never queued
     assert.deepEqual(await committed(client), [['c1', 'completed']])
   })
 
-  test("#19 a sibling never authorizes against another command's uncommitted write", async ({
+  test("a sibling never authorizes against another command's uncommitted write", async ({
     assert,
   }) => {
     const { client } = await createDatabase()
@@ -121,9 +121,7 @@ test.group('fourth review: siblings on one transaction are refused, never queued
     assert.lengthOf(await client.from('memberships').where('user_id', 'carol'), 0)
   })
 
-  test("#22 a call that lost the command's async context is refused, not hung", async ({
-    assert,
-  }) => {
+  test("a call that lost the command's async context is refused, not hung", async ({ assert }) => {
     const { client } = await createDatabase()
     for (const n of [1, 2]) await addProof(client, `p${n}`)
     const parent = named('notes.parent')
@@ -149,7 +147,7 @@ test.group('fourth review: siblings on one transaction are refused, never queued
     assert.deepEqual(await committed(client), [['c1', 'completed']])
   })
 
-  test('#22 awaiting a sibling called later is refused, not hung', async ({ assert }) => {
+  test('awaiting a sibling called later is refused, not hung', async ({ assert }) => {
     const { client } = await createDatabase()
     for (const n of [1, 2]) await addProof(client, `p${n}`)
     const a = named('notes.a')
@@ -171,7 +169,7 @@ test.group('fourth review: siblings on one transaction are refused, never queued
   })
 })
 
-test.group('fourth review: nested commands must be awaited', () => {
+test.group('nested commands must be awaited', () => {
   test('nested commands awaited one after another inside work compose', async ({ assert }) => {
     const { client } = await createDatabase()
     for (const n of [1, 2, 3]) await addProof(client, `p${n}`)
@@ -211,7 +209,7 @@ test.group('fourth review: nested commands must be awaited', () => {
     ])
   })
 
-  test('#21 a parent that returns before its child fails loudly and commits nothing', async ({
+  test('a parent that returns before its child fails loudly and commits nothing', async ({
     assert,
   }) => {
     const { client } = await createDatabase()
@@ -240,7 +238,7 @@ test.group('fourth review: nested commands must be awaited', () => {
     assert.equal(await count(client, 'notes'), 0)
   })
 
-  test("#23 an unawaited child cannot erase the parent's write behind a success", async ({
+  test("an unawaited child cannot erase the parent's write behind a success", async ({
     assert,
   }) => {
     const { client } = await createDatabase()
@@ -365,7 +363,7 @@ test.group('fourth review: nested commands must be awaited', () => {
   })
 })
 
-test.group('fourth review #20: host queries while a command is open (documented rule)', () => {
+test.group('host queries while a command is open (documented rule)', () => {
   test('a host write issued while an unawaited command is open is lost when it fails', async ({
     assert,
   }) => {
@@ -389,7 +387,7 @@ test.group('fourth review #20: host queries while a command is open (documented 
   })
 })
 
-test.group('third review P3-19: savepoint names', () => {
+test.group('savepoint names', () => {
   test('a savepoint the host left open inside work does not capture the rollback', async ({
     assert,
   }) => {
@@ -397,7 +395,7 @@ test.group('third review P3-19: savepoint names', () => {
     await addProof(client, 'p1')
     const { operation, hooks } = noteOperation()
     hooks.afterWork = async ({ trx }) => {
-      await trx.rawQuery('SAVEPOINT idm')
+      await trx.rawQuery('SAVEPOINT drg')
       throw new Error('work failed')
     }
     await within(client.transaction((trx) => executeIn(trx, operation, auth(1)).catch(() => null)))
@@ -405,7 +403,7 @@ test.group('third review P3-19: savepoint names', () => {
   })
 })
 
-test.group('third review P3-18: cleanup never masks the original error', () => {
+test.group('cleanup never masks the original error', () => {
   test('a transaction SQLite already rolled back rethrows the original error', async ({
     assert,
   }) => {
@@ -433,7 +431,7 @@ test.group('third review P3-18: cleanup never masks the original error', () => {
   })
 })
 
-test.group('fifth review #25: an aborted child never commits without its receipt', () => {
+test.group('an aborted child never commits without its receipt', () => {
   /** Parent work: Promise.all of a slow child command and a validation that rejects first. */
   function probe() {
     const parent = named('notes.parent')
@@ -454,7 +452,7 @@ test.group('fifth review #25: an aborted child never commits without its receipt
   }
 
   for (const waits of [true, false]) {
-    test(`#25 the host ${waits ? 'waits, then runs' : 'immediately runs'} its next command`, async ({
+    test(`the host ${waits ? 'waits, then runs' : 'immediately runs'} its next command`, async ({
       assert,
     }) => {
       const { client } = await createDatabase()
@@ -509,7 +507,7 @@ test.group('fifth review #25: an aborted child never commits without its receipt
   })
 })
 
-test.group('sixth review #28: no new children once a command is closing', (group) => {
+test.group('no new children once a command is closing', (group) => {
   group.each.teardown(() => {
     internalHooks.onUnwind = undefined
     internalHooks.onClosing = undefined

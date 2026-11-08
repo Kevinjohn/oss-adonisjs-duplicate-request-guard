@@ -11,7 +11,7 @@ import {
   receipts,
 } from './helpers.js'
 
-/** Each group answers one finding of the 2026-11-07 independent review. */
+/** Package contracts: value rules, the dialect, rollback, identity scope and the API surface. */
 
 class Point {
   constructor(
@@ -24,7 +24,7 @@ cyclic.self = cyclic
 // eslint-disable-next-line no-sparse-arrays -- the hole is the point of this fixture
 const sparse = [1, , 3]
 
-test.group('review P1/P2/P3: only plain JSON data is accepted', () => {
+test.group('only plain JSON data is accepted', () => {
   test('a function or symbol in the result is refused and nothing commits', async ({ assert }) => {
     const { client } = await createDatabase()
     const { operation } = noteOperation()
@@ -131,7 +131,7 @@ test.group('review P1/P2/P3: only plain JSON data is accepted', () => {
   })
 })
 
-test.group('review P2: only better-sqlite3 is supported', () => {
+test.group('only better-sqlite3 is supported', () => {
   for (const name of ['postgres', 'mysql', 'mssql', 'sqlite3', 'libsql']) {
     test(`a ${name} connection is refused with E_UNSUPPORTED_DIALECT`, async ({ assert }) => {
       const fake = { dialect: { name }, connectionName: name, isTransaction: false } as never
@@ -149,7 +149,7 @@ test.group('review P2: only better-sqlite3 is supported', () => {
   }
 })
 
-test.group('review P2: a failed execute never leaves a pending row', () => {
+test.group('a failed execute never leaves a pending row', () => {
   test('a host that swallows the error and commits keeps nothing from the attempt', async ({
     assert,
   }) => {
@@ -181,7 +181,7 @@ test.group('review P2: a failed execute never leaves a pending row', () => {
   })
 })
 
-test.group('review P2: rules the earlier suite did not pin', () => {
+test.group('identity, ordering and retention rules', () => {
   test('authorizeAccess runs before the reservation exists', async ({ assert }) => {
     const { client } = await createDatabase()
     const { operation, hooks } = noteOperation()
@@ -320,7 +320,7 @@ test.group('review P2: rules the earlier suite did not pin', () => {
   })
 })
 
-test.group('review P3: API surface', () => {
+test.group('API surface', () => {
   test('completeReceipt is internal', ({ assert }) => {
     assert.notProperty(api, 'completeReceipt')
   })
