@@ -1,0 +1,15 @@
+# Dependabot opens one pull request a week with patch updates to npm packages.
+# Minor and major updates are made by hand.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      patch:
+        update-types: ['patch']
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
+    open-pull-requests-limit: 5

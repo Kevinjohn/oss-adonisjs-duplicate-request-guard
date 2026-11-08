@@ -1,0 +1,124 @@
+{
+  "name": "@kevinjohn/adonisjs-duplicate-request-guard",
+  "description": "Run a repeated request once and return its first result, inside your Lucid transaction (AdonisJS 7)",
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "type": "module",
+  "files": [
+    "build",
+    "!build/bin",
+    "!build/tests",
+    "CHANGELOG.md"
+  ],
+  "main": "./build/index.js",
+  "exports": {
+    ".": "./build/index.js",
+    "./types": "./build/src/types.js"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint --max-warnings 0 .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check --ignore-unknown .",
+    "quick:test": "node --import=@poppinss/ts-exec --enable-source-maps bin/test.ts",
+    "pretest": "pnpm lint",
+    "test": "c8 pnpm quick:test",
+    "precompile": "pnpm lint",
+    "compile": "tsdown && tsc --emitDeclarationOnly --declaration",
+    "build": "pnpm compile"
+  },
+  "c8": {
+    "reporter": [
+      "text",
+      "html"
+    ],
+    "exclude": [
+      "tests/**",
+      "bin/**",
+      "src/types.ts"
+    ],
+    "all": true,
+    "include": [
+      "index.ts",
+      "configure.ts",
+      "src/**/*.ts"
+    ],
+    "check-coverage": true,
+    "statements": 100,
+    "lines": 100,
+    "branches": 95,
+    "functions": 100
+  },
+  "keywords": [
+    "adonisjs",
+    "adonisjs-lucid",
+    "idempotency",
+    "idempotency-key",
+    "duplicate-requests"
+  ],
+  "author": "Kevinjohn Gallagher",
+  "license": "MIT",
+  "homepage": "https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard#readme",
+  "bugs": {
+    "url": "https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard.git"
+  },
+  "devDependencies": {
+    "@adonisjs/assembler": "^8.6.0",
+    "@adonisjs/core": "^7.0.1",
+    "@adonisjs/eslint-config": "^3.0.0",
+    "@adonisjs/limiter": "^3.0.0",
+    "@adonisjs/lucid": "^22.4.2",
+    "@adonisjs/prettier-config": "^1.4.5",
+    "@adonisjs/session": "^8.1.0",
+    "@adonisjs/tsconfig": "^2.0.0",
+    "@japa/assert": "^4.2.0",
+    "@japa/runner": "^5.3.0",
+    "@kevinjohn/adonisjs-account-kit": "https://github.com/Kevinjohn/oss-adonisjs-account-kit/releases/download/v0.3.2/kevinjohn-adonisjs-account-kit-0.3.2.tgz",
+    "@poppinss/ts-exec": "^1.5.1",
+    "@types/luxon": "^3.0.0",
+    "@types/node": "^24.0.0",
+    "@vinejs/vine": "^4.4.0",
+    "better-sqlite3": "^13.0.0",
+    "c8": "^12.0.0",
+    "eslint": "^10.14.0",
+    "luxon": "^3.0.0",
+    "pg": "^8.0.0",
+    "prettier": "^3.8.1",
+    "tsdown": "^0.23.4",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@adonisjs/core": "^7.0.0",
+    "@adonisjs/lucid": "^22.0.0"
+  },
+  "tsdown": {
+    "entry": [
+      "./index.ts",
+      "./configure.ts",
+      "./src/types.ts"
+    ],
+    "outDir": "./build",
+    "clean": true,
+    "format": "esm",
+    "minify": "dce-only",
+    "fixedExtension": false,
+    "dts": false,
+    "treeshake": false,
+    "sourcemaps": false,
+    "target": "esnext",
+    "copy": [
+      {
+        "from": "stubs",
+        "to": "build"
+      }
+    ]
+  },
+  "prettier": "@adonisjs/prettier-config",
+  "packageManager": "pnpm@11.23.0"
+}
