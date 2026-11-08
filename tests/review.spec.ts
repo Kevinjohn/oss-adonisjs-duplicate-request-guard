@@ -49,6 +49,25 @@ test.group('only plain JSON data is accepted', () => {
     assert.deepEqual(replay.result, ok.result)
   })
 
+  test('an array with a hole is refused even when another property pads its key count', async ({
+    assert,
+  }) => {
+    const { client } = await createDatabase()
+    const { operation } = noteOperation()
+    await addProof(client, 'p1')
+    for (const bad of [
+      Object.assign(Array(3), [1], { 2: 3, extra: true }),
+      Object.assign(Array(1), { extra: 1 }),
+    ]) {
+      const op = { ...operation, work: () => bad as never }
+      await assert.rejects(
+        () => execute(client, op, { ...input(1), authorization: { proofToken: 'p1' } }),
+        errors.InvalidCommandResultException
+      )
+    }
+    assert.lengthOf(await receipts(client), 0)
+  })
+
   test('an undefined result is a server error, distinct from a bad payload', async ({ assert }) => {
     const { client } = await createDatabase()
     const { operation } = noteOperation()
@@ -178,6 +197,34 @@ test.group('a failed execute never leaves a pending row', () => {
       authorization: { proofToken: 'p1' },
     })
     assert.isFalse(retry.replayed)
+  })
+
+  test('a frozen error from work with an open child still rolls the command back', async ({
+    assert,
+  }) => {
+    const { client } = await createDatabase()
+    const { operation, hooks } = noteOperation()
+    for (const n of [1, 2]) await addProof(client, `p${n}`)
+    let pending: Promise<unknown> = Promise.resolve()
+    hooks.afterWork = ({ trx }) => {
+      pending = executeIn(trx, operation, { ...input(2), authorization: { proofToken: 'p2' } })
+      // A cause cannot be attached to this error; the rollback must still run.
+      throw Object.freeze(new Error('frozen'))
+    }
+    await client.transaction(async (trx) => {
+      const error = await executeIn(trx, operation, {
+        ...input(1),
+        authorization: { proofToken: 'p1' },
+      }).then(
+        () => 'resolved',
+        (reason: Error) => reason.message
+      )
+      assert.equal(error, 'frozen')
+      await trx.table('notes').insert({ scope_id: 's1', body: 'host write' })
+    })
+    await Promise.allSettled([pending])
+    assert.lengthOf(await receipts(client), 0)
+    assert.equal(await count(client, 'notes'), 1)
   })
 })
 
@@ -337,6 +384,10 @@ test.group('API surface', () => {
     await execute(db.connection(), operation, { ...input(1), authorization: { proofToken: 'p1' } })
     await assert.rejects(
       () => execute(db.connection('second'), operation, input(2)),
+      errors.UnsafeSqlitePoolException
+    )
+    await assert.rejects(
+      () => pruneReceipts(db.connection('second'), { olderThan: new Date() }),
       errors.UnsafeSqlitePoolException
     )
   })

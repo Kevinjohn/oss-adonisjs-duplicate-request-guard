@@ -49,7 +49,12 @@ function canonical(value: unknown, refuse: () => never, ancestors = new Set<obje
     const prototype = Object.getPrototypeOf(value)
     if (Object.getOwnPropertySymbols(value).length > 0) return refuse()
     if (Array.isArray(value)) {
-      if (prototype !== Array.prototype || Object.keys(value).length !== value.length) {
+      const keys = Object.keys(value)
+      if (
+        prototype !== Array.prototype ||
+        keys.length !== value.length ||
+        keys.some((key, index) => key !== String(index))
+      ) {
         return refuse()
       }
       return `[${value.map((item) => canonical(item, refuse, ancestors)).join(',')}]`
@@ -312,9 +317,7 @@ async function runClaimed<Payload, Authorization, Result>(
     frame.closing = true
     // Nested commands settle first: the rollback below then takes everything they wrote.
     const [aborted] = await abortChildren(frame)
-    if (aborted !== undefined && error instanceof Error && error.cause === undefined) {
-      error.cause = aborted
-    }
+    if (aborted !== undefined) attachCause(error, aborted)
     await rollBack(trx, savepoint, error)
     throw error
   }
@@ -330,7 +333,20 @@ async function rollBack(trx: TransactionClientContract, savepoint: string, error
     await trx.rawQuery(`ROLLBACK TO SAVEPOINT ${savepoint}`)
     await trx.rawQuery(`RELEASE SAVEPOINT ${savepoint}`)
   } catch (cleanup) {
-    if (error instanceof Error && error.cause === undefined) error.cause = cleanup
+    attachCause(error, cleanup)
+  }
+}
+
+/**
+ * Gives an error without a `cause` the given one. A frozen error or a read-only `cause` keeps the
+ * host's error as it is: the rollback that follows must never be skipped over an annotation.
+ */
+function attachCause(error: unknown, cause: unknown) {
+  if (!(error instanceof Error) || error.cause !== undefined) return
+  try {
+    error.cause = cause
+  } catch {
+    // Not writable: the error surfaces unannotated.
   }
 }
 
@@ -440,6 +456,7 @@ export async function pruneReceipts(
   client: QueryClientContract,
   options: PruneOptions
 ): Promise<number> {
+  assertSupportedConnection(client)
   return Number(
     await client
       .from(RECEIPTS_TABLE)

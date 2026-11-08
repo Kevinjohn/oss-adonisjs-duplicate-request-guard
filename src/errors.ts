@@ -105,7 +105,7 @@ export class ReceiptSchemaException extends Exception {
   static status = 500
   constructor() {
     super(
-      'The request_receipts table does not match the current migration; republish it with node ace configure',
+      'The request_receipts table does not match the current migration; write a migration that brings it in line with the current stub (configure never rewrites an existing migration)',
       { code: ReceiptSchemaException.code, status: ReceiptSchemaException.status }
     )
   }
