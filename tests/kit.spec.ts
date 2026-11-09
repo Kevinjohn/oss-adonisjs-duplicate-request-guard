@@ -6,7 +6,7 @@ import { bootKit, type KitFixture } from './kit_fixture.js'
 
 const busy = () => Object.assign(new Error('simulated busy'), { code: 'SQLITE_BUSY' })
 
-test.group('executeIn inside Account Kit 0.3.2 authentication.withCurrent', (group) => {
+test.group('executeIn inside Account Kit 0.3.3 authentication.withCurrent', (group) => {
   let fixture: KitFixture
   let users = 0
   group.setup(async () => {
