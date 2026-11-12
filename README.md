@@ -20,6 +20,10 @@ node ace migration:run
 Peers: `@adonisjs/core` ^7.0.0, `@adonisjs/lucid` ^22.0.0. Node >= 24. Each release lists its
 archive's SHA-256.
 
+## User stories
+
+See the [user story catalogue](user-stories/README.md) for source-reviewed command behavior, transaction boundaries, replay policy and operations.
+
 ## Use
 
 ```ts

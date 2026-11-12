@@ -1,0 +1,9 @@
+# Decision gaps
+
+No source-backed mismatch was identified between the [README contracts](../README.md#contracts), [public types](../src/types.ts), [execution pipeline](../src/receipts.ts), and migration during this catalogue pass. No separate product decision record is present. The following boundaries are retained intentionally, not unresolved feature requests.
+
+| Boundary            | Contract and source                                                                                                                                                                                        | Catalogue treatment                                                                     |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Database support    | [assertSupportedConnection](../src/receipts.ts) permits only better-sqlite3, pool maximum one, and one open writer connection per resolved file.                                                           | Every callable API states this condition; no untested dialect availability is inferred. |
+| Transaction retries | [execute and executeIn](../src/receipts.ts) separate a single package-owned transaction from caller ownership. Host callbacks may be rerun by their owner and must remain database-only and safe to rerun. | US-GUARD-01/02 do not promise automatic retries or safe external side effects.          |
+| Receipt retention   | [pruneReceipts](../src/receipts.ts) accepts the host's cutoff; a deleted identity runs fresh.                                                                                                              | US-GUARD-05 leaves the retry horizon and scheduling to the operator.                    |
