@@ -13,19 +13,20 @@ As an application operator, I want to configure the receipt table and a supporte
 
 - Configure publishes the receipts migration once; an existing filename with `_create_request_receipts_table.ts` suffix is left unchanged.
 - The migration creates `request_receipts` with unique operation/command-ID and operation/request-key indexes. An outdated cross-actor unique index can produce `E_RECEIPT_SCHEMA`; the host must use the current schema.
-- Public operations require better-sqlite3 and pool maximum one. A second open Lucid connection previously registered by guarded operations for the same resolved database file is refused; closed owners are pruned. Unregistered external writers are not detected. Each in-memory connection is independent.
+- Public operations require better-sqlite3 and pool maximum one. A competing open Lucid connection is refused when another still-open connection to the same resolved database file was already registered by guarded operations; closed owners are pruned. Unregistered external writers are not detected. Each in-memory connection is independent.
 - The package provides APIs and a migration hook, without mounting HTTP routes or a scheduled cleanup job.
 
 ## User flow
 
 ```mermaid
 flowchart TD
-    A["Operator configures one SQLite writer connection"] --> B["Run configure and migrations"]
+    A["Operator configures one SQLite writer connection"] --> B["Run configure"]
     B --> C{"Migration already published?"}
     C -->|Yes| D["Existing file remains unchanged"]
-    C -->|No| E["Receipt schema is created from the published migration"]
-    D --> F["Host invokes guarded commands"]
-    E --> F
+    C -->|No| E["Publish receipt migration"]
+    D --> M["Host runs Lucid migrations"]
+    E --> M
+    M --> F["Host invokes guarded commands"]
     F --> G{"Supported connection?"}
     G -->|No| H["Receive dialect or pool/connection error"]
     G -->|Yes| I["Commands use receipt identities"]
