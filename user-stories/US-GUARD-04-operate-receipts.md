@@ -13,7 +13,7 @@ As an application operator, I want to configure the receipt table and a supporte
 
 - Configure publishes the receipts migration once; an existing filename with `_create_request_receipts_table.ts` suffix is left unchanged.
 - The migration creates `request_receipts` with unique operation/command-ID and operation/request-key indexes. An outdated cross-actor unique index can produce `E_RECEIPT_SCHEMA`; the host must use the current schema.
-- Public operations require better-sqlite3 and pool maximum one. A second open Lucid connection to the same resolved database file is refused; closing the first releases ownership. Each in-memory connection is independent.
+- Public operations require better-sqlite3 and pool maximum one. A second open Lucid connection previously registered by guarded operations for the same resolved database file is refused; closed owners are pruned. Unregistered external writers are not detected. Each in-memory connection is independent.
 - The package provides APIs and a migration hook, without mounting HTTP routes or a scheduled cleanup job.
 
 ## User flow
@@ -39,9 +39,10 @@ Scope: configure publication and connection validation; application migration ex
 flowchart TD
     A["configure(command)"] --> B["readdir migrations and check suffix"]
     B --> C{"Suffix exists?"}
-    C -->|Yes| D["Log skip and return"]
+    C -->|Yes| D["Log skip and return from configure"]
+    D --> F
     C -->|No| E["codemods.makeUsingStub publishes migration"]
-    E --> F["Host runs Lucid migration"]
+    E --> F["Host runs Lucid migration; existing file does not prove application"]
     G["execute, executeIn or pruneReceipts"] --> H["assertSupportedConnection"]
     H --> I["Validate dialect, pool and resolved-file ownership"]
     I --> J["Continue or throw before operation query"]

@@ -3,7 +3,7 @@
 As a command caller, I want the guard to check current access before returning a saved result so that a retry does not disclose data after permissions change.
 
 **Status:** Current.
-**Access:** `authorizeAccess` runs for every call; optional `authorizeReplay` runs on completed matching replay. Omission permits replay after access policy passes.
+**Access:** `authorizeAccess` runs for fresh and replay calls after initial payload validation; optional `authorizeReplay` runs on completed matching replay. Omission permits replay after access policy passes.
 **Entry:** Call `execute` or `executeIn` using the original operation namespace and identity.
 **Documentation:** [README operation policy order](../README.md#use)
 **Source:** [`reserveAndRun`](../src/receipts.ts)
@@ -35,7 +35,7 @@ Scope: package command path; caller authentication, HTTP response shaping, and e
 
 ```mermaid
 flowchart TD
-    A["executeIn enters authorizeAccess"] --> B["reserveAndRun finds same operation/actor identity"]
+    A["executeIn validates and hashes payload, then enters authorizeAccess"] --> B["reserveAndRun finds same operation/actor identity"]
     B --> C["verify command ID, request key, payload hash"]
     C --> D{"Matches and completed?"}
     D -->|No| E["conflict or in-progress error"]
