@@ -64,6 +64,8 @@ Replace the field table with a short list of controls and their visible results.
 
 - Use one story per meaningful outcome. An inseparable set of controls may share a story;
   independently useful actions deserve their own. Create and edit are distinct actions.
+  Keep inputs, decisions and recovery focused on that one action; do not create stories for its
+  internal guards, helpers or technical variants.
   When splitting, preserve the original ID/path for one outcome and give the other the next unused
   ID; update catalogue references and counts together.
 - Include every relevant field, including conditional and read-only fields. Record exact labels,
@@ -72,8 +74,9 @@ Replace the field table with a short list of controls and their visible results.
 - Edit forms include current-value prefills. API/library/CLI actions document real argument names,
   required values, omission/null defaults, flag/prompt behavior and limits. Verify what callbacks
   receive before assigning host policy to them.
-- Link an identical shared field list and describe create/edit differences locally. Do not make
-  readers chase several links to discover a form.
+- Move repeated or lengthy field lists, technical schemas and protocol details to one cohesive
+  repository guide/reference with a direct section link. Keep relevant controls, outcomes and
+  action-specific differences clear locally; do not make readers chase several links for a form.
 - Keep acceptance criteria concise and observable. Avoid detailed test scripts and exhaustive
   backend guarantees; keep those in tests and the authoritative decision record.
 - Keep identifiers and filenames stable. Add the next unused identifier within the area. Retain
@@ -114,6 +117,10 @@ semantics and explain their mapping where an established scheme differs.
   implementation. Link supporting files under Code references.
 - Keep diagrams focused on the action. Include meaningful choices, cancellation, refusal, failure
   and recovery where they affect the journey; avoid repeating every validation or security rule.
+  Use the owning handler/service/transaction as the default code-flow unit. Group routine field/proof
+  validation into one boundary with one refusal path; field rules stay in criteria or a reference.
+  Expand only for materially different access, persisted effects, commit/consumption or recovery.
+  Preserve material ordering without making a node for each field, message or helper.
 - Trace producers and consumers: entry, handler, state or service, persistence where applicable
   and resulting UI. A retained component or setter alone does not prove a reachable journey.
 - Distinguish server writes, device preferences and read-only actions. Verify the demo's actual
@@ -132,6 +139,18 @@ semantics and explain their mapping where an established scheme differs.
 - Reconcile labels and branches against source. Parse changed Mermaid diagrams and inspect
   representative rendering; report any check that could not be completed. Syntax validation does
   not establish behavioral correctness or prove a browser journey was exercised.
-- Tie validation and CI to the final content/revision, distinguish skipped jobs from successful
-  gates and reuse evidence only for unchanged guarantees. Report source review, documentation
-  checks and runtime journeys separately.
+
+## Verification and sign-off
+
+Agree whether the task covers a catalogue baseline, named stories or an agreed finding list.
+Sign off that scope only after reconciling it with source and obtaining the applicable checks and
+required review. In the existing handoff or final response, record the reviewed scope/source and
+content revision, supporting source references and finding dispositions, actual checks/skips/limits,
+review outcome when required, and delivery/PR state. CI evidence must match the final published
+head. Keep source review, documentation checks and runtime journeys distinct.
+
+For correction rounds, verify the agreed items and affected guarantees; record unrelated new
+observations separately. Recheck introduced defects and invalidated review evidence while retaining
+acceptance for unaffected content. Closing the latest finding list establishes that list's closure;
+a catalogue-wide baseline claim needs reconciliation of the agreed catalogue scope. Preserve the
+requested merge boundary; catalogue work grants no merge permission.
