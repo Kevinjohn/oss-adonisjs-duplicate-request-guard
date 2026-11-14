@@ -21,7 +21,7 @@ As a command caller, I want to submit a command with a stable identity so that r
 - Payload/scope JSON validation occurs before any policy; `authorizeAccess` is the first policy and runs before reservation. Invalid payloads do not commit a receipt.
 - `Operation` requires `name`, `authorizeAccess`, and `work`; omitted execute/replay policies allow their respective path. Use only the provided `trx` for database changes.
 - A fresh reservation parses optional opaque authorization, runs execute authorization, calls `work`, and stores a plain JSON result in the same transaction.
-- Matching completed identity returns the stored JSON-equal result with `replayed: true`; mismatched key/command/payload conflicts, pending re-entry reports in-progress, and any fresh-path failure rolls back receipt and writes.
+- Matching completed identity returns the stored JSON-equal result with `replayed: true`; mismatched key/command/payload conflicts, re-entering the same pending command from `work` or `authorizeExecute` (both run after the pending insert) reports in-progress, and any fresh-path failure rolls back receipt and writes.
 - Non-JSON values (including cycles, dates, non-finite numbers, symbols and class instances) are refused; `-0` replays as `0`.
 
 ## User flow
@@ -31,7 +31,7 @@ flowchart TD
     A["Caller submits command ID, request key and payload"] --> B["Host authenticates actor and scope"]
     B --> C["Guard checks access"]
     C --> C2{"Access allowed?"}
-    C2 -->|No| C3["Refuse; no receipt is kept"]
+    C2 -->|No| C3["Refuse; no new receipt; an existing receipt is unchanged"]
     C2 -->|Yes| D{"New matching command?"}
     D -->|No, completed and matching| R{"Replay policy allows?"}
     R -->|No| R2["Refuse; stored receipt is kept"]
