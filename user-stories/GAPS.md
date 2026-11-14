@@ -1,6 +1,6 @@
 # Decision gaps
 
-No source-backed mismatch was identified between the [README contracts](../README.md#contracts), [public types](../src/types.ts), [execution pipeline](../src/receipts.ts), and migration during this catalogue pass. No separate product decision record is present. The following boundaries are retained intentionally, not unresolved feature requests.
+None was identified between the [README contracts](../README.md#contracts), [public types](../src/types.ts), [execution pipeline](../src/receipts.ts), and migration during this catalogue pass, apart from the documentation mismatch recorded below. No separate product decision record is present. The following boundaries are retained intentionally, not unresolved feature requests.
 
 | Boundary            | Contract and source                                                                                                                                                                                                   | Catalogue treatment                                                                                |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |

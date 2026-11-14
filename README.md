@@ -137,7 +137,7 @@ const addPlainNote: Operation<{ body: string }, undefined, { noteId: number }> =
 ## Errors
 
 `errors.*` / `E_*` exports, all `@adonisjs/core` exceptions: `E_DUPLICATE_REQUEST_CONFLICT` (409),
-`E_DUPLICATE_REQUEST_IN_PROGRESS` (409, only on re-entry from the command's own `work`),
+`E_DUPLICATE_REQUEST_IN_PROGRESS` (409, only on re-entry from the command's own `work` or policies),
 `E_INVALID_COMMAND_VALUE` (400), `E_CONCURRENT_COMMAND`, `E_UNAWAITED_NESTED_COMMAND`,
 `E_INVALID_COMMAND_RESULT`, `E_RECEIPT_NOT_PENDING`,
 `E_RECEIPT_SCHEMA` (receipts table from an older stub), `E_TRANSACTION_OWNER`,

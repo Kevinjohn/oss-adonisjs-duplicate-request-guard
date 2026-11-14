@@ -58,7 +58,7 @@ flowchart TD
 
 ## Actions without input fields
 
-Replace the field table with a short list of controls and their visible results. Do not create empty or artificial field rows. For a package action with no UI, list the actual service inputs and returned values instead. Include confirmation controls and relevant cancellation or failure results when they affect the action. Example: `- **Prune expired confirmations** removes spent or expired rows and returns the number deleted.` This repository-specific API outcome is an example; replace it with an outcome that exists in the target repository.
+Replace the field table with a short list of controls and their visible results. Do not create empty or artificial field rows. For a package action with no UI, list the actual service inputs and returned values instead. Include confirmation controls and relevant cancellation or failure results when they affect the action. Example: ``- **Prune receipts** removes completed receipts updated before `olderThan` and returns the number deleted.`` This outcome is specific to this repository; replace it with an outcome that exists in the target repository.
 
 ## Writing and maintenance rules
 

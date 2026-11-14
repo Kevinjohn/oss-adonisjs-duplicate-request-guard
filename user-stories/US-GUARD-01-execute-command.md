@@ -21,7 +21,7 @@ As a command caller, I want to submit a command with a stable identity so that r
 - Payload/scope JSON validation occurs before any policy; `authorizeAccess` is the first policy and runs before reservation. Invalid payloads do not commit a receipt.
 - `Operation` requires `name`, `authorizeAccess`, and `work`; omitted execute/replay policies allow their respective path. Use only the provided `trx` for database changes.
 - A fresh reservation parses optional opaque authorization, runs execute authorization, calls `work`, and stores a plain JSON result in the same transaction.
-- Matching completed identity returns the stored JSON-equal result with `replayed: true`; mismatched key/command/payload conflicts, pending re-entry reports in-progress, and any fresh-path failure rolls back receipt and writes.
+- Matching completed identity returns the stored JSON-equal result with `replayed: true`; mismatched key/command/payload conflicts, re-entering the same pending command from `work` or `authorizeExecute` (both run after the pending insert) reports in-progress, and any fresh-path failure rolls back receipt and writes.
 - Non-JSON values (including cycles, dates, non-finite numbers, symbols and class instances) are refused; `-0` replays as `0`.
 
 ## User flow
@@ -29,9 +29,13 @@ As a command caller, I want to submit a command with a stable identity so that r
 ```mermaid
 flowchart TD
     A["Caller submits command ID, request key and payload"] --> B["Host authenticates actor and scope"]
-    B --> C["Guard checks access and identity"]
-    C --> D{"New matching command?"}
-    D -->|No, completed and matching| E["Return first result"]
+    B --> C["Guard checks access"]
+    C --> C2{"Access allowed?"}
+    C2 -->|No| C3["Refuse; no new receipt; an existing receipt is unchanged"]
+    C2 -->|Yes| D{"New matching command?"}
+    D -->|No, completed and matching| R{"Replay policy allows?"}
+    R -->|No| R2["Refuse; stored receipt is kept"]
+    R -->|Yes| E["Return first result"]
     D -->|Conflict or pending| F["Return mapped conflict"]
     D -->|Yes| G["Run command"]
     G --> H{"Operation succeeds?"}
@@ -47,15 +51,24 @@ Scope: package command path; caller authentication, HTTP response shaping, and r
 flowchart TD
     A["execute(client, operation, input)"] --> B["assertSupportedConnection; open transaction"]
     B --> C["executeIn claims the transaction frame"]
-    C --> D["runClaimed hashes scope and payload, opens SAVEPOINT, then authorizeAccess"]
-    D --> E["unique reservation arbitration"]
+    C --> D["runClaimed hashes scope and payload, then opens SAVEPOINT"]
+    D --> D2["authorizeAccess"]
+    D2 --> E["unique reservation arbitration"]
     E --> F{"Existing identity?"}
-    F -->|Yes| G["compare command, key, payload; replay or conflict"]
+    F -->|Yes| G["compare command, key, payload"]
+    G -->|Mismatch or pending| X["conflict or in-progress error"]
+    G -->|Completed and matching| L["authorizeReplay; return replayed=true"]
     F -->|No| H["parse authorization; authorizeExecute; work"]
     H --> I["completeReceipt requires one pending row"]
-    I --> J["release savepoint and commit; return replayed=false"]
-    G --> L["authorizeReplay if matching completed; return replayed=true"]
-    H -->|Error| K["rollback savepoint; propagate original error"]
+    I --> J["return replayed=false"]
+    L --> K["release savepoint"]
+    J --> K
+    K --> M["commit transaction"]
+    D2 -->|Error| Y["rollback savepoint; rethrow original error"]
+    X --> Y
+    L -->|authorizeReplay throws| Y
+    H -->|Error| Y
+    I -->|Error| Y
 ```
 
-**Code references:** [API](../index.ts), [execute](../src/receipts.ts#L437), [Operation](../src/types.ts#L8)
+**Code references:** [API](../index.ts), [execute](../src/receipts.ts#L437), [Operation](../src/types.ts#L38)
