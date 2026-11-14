@@ -35,13 +35,17 @@ Scope: package command path; caller authentication, HTTP response shaping, and e
 
 ```mermaid
 flowchart TD
-    A["executeIn validates and hashes payload, then enters authorizeAccess"] --> B["reserveAndRun finds same operation/actor identity"]
+    A["executeIn delegates to runClaimed"] --> A2["runClaimed hashes payload, opens SAVEPOINT, calls authorizeAccess"]
+    A2 -->|Denied| Z["rollback savepoint; rethrow; no receipt change"]
+    A2 --> B["reserveAndRun finds same operation/actor identity"]
     B --> C["verify command ID, request key, payload hash"]
     C --> D{"Matches and completed?"}
     D -->|No| E["conflict or in-progress error"]
+    E --> Z
     D -->|Yes| F["JSON.parse stored result"]
     F --> G["authorizeReplay(context, result), if provided"]
+    G -->|Throws| Z
     G --> H["return replayed=true; keep receipt"]
 ```
 
-**Code references:** [policy order](../README.md#use), [replay branch](../src/receipts.ts#L370), [namespace construction](../src/receipts.ts#L317)
+**Code references:** [policy order](../README.md#use), [replay branch](../src/receipts.ts#L388), [namespace construction](../src/receipts.ts#L296), [refusal rollback](../src/receipts.ts#L315)

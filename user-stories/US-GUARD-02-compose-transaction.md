@@ -11,6 +11,7 @@ As a transaction owner, I want a guarded command to share my transaction so that
 
 ## Acceptance criteria
 
+- Inputs: `trx` (required; must be a transaction client on a supported connection), `operation` (an `Operation`), and `input` (`ExecuteInput`: `actorId`, `scopeId`, `payload`, `command`, optional `authorization`). Returns `Promise<Outcome<Result>>`, that is `{ replayed, result }`.
 - `execute` rejects transaction clients; `executeIn` rejects non-transaction clients.
 - Each command uses a savepoint on the caller transaction; nested `executeIn` is supported from the innermost command policies/work.
 - Sibling calls and calls with lost async context fail immediately with `E_CONCURRENT_COMMAND`. A late nested call from a closing frame, or a parent finishing with an open nested command, fails with `E_UNAWAITED_NESTED_COMMAND`. Parent unwinding aborts and waits for children before rollback; a child that never settles keeps the parent waiting.
@@ -44,4 +45,4 @@ flowchart TD
     C -->|Sibling/late child| H["concurrency or unawaited error immediately"]
 ```
 
-**Code references:** [executeIn](../src/receipts.ts#L257), [savepoint and nested execution](../src/receipts.ts#L300), [types](../src/types.ts#L8)
+**Code references:** [executeIn](../src/receipts.ts#L257), [savepoint and nested execution](../src/receipts.ts#L300), [Operation](../src/types.ts#L38), [ExecuteInput](../src/types.ts#L47)

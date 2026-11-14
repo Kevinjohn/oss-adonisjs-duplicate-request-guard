@@ -10,4 +10,4 @@
 | [US-GUARD-04](US-GUARD-04-operate-receipts.md)    | Install receipt migration and supported connection        | Application operator                                   | Operator | New       |
 | [US-GUARD-05](US-GUARD-05-prune-receipts.md)      | Remove completed receipts before cutoff                   | Host operator/scheduler                                | Operator | New       |
 
-Public exports mapped: `RECEIPTS_TABLE`, `assertSupportedConnection`, `execute`, `executeIn`, `pruneReceipts`, `errors`, named error exports, and all public operation/input/result/options types. No prior story catalogue existed; all rows are newly documented.
+Public exports mapped: `RECEIPTS_TABLE`, `assertSupportedConnection`, `configure` (US-GUARD-04), the `./types` subpath export, `execute`, `executeIn`, `pruneReceipts`, `errors`, named error exports, and all public operation/input/result/options types. No prior story catalogue existed; all rows are newly documented.
