@@ -6,6 +6,7 @@ import { test } from '@japa/runner'
 import { ListLoader } from '@adonisjs/core/ace'
 import Configure from '@adonisjs/core/commands/configure'
 import { IgnitorFactory } from '@adonisjs/core/factories'
+import { configure } from '../configure.js'
 import { execute } from '../index.js'
 import { addProof, createDatabase, input, loadMigration, noteOperation } from './helpers.js'
 
@@ -60,3 +61,26 @@ test('configure publishes the receipts migration once, and it works', async ({ a
     await rm(root, { recursive: true, force: true })
   }
 }).timeout(20_000)
+
+test('configure stops when the migrations directory cannot be read', async ({ assert }) => {
+  const root = await mkdtemp(join(tmpdir(), 'adonisjs-duplicate-request-guard-unreadable-'))
+  try {
+    // A file where the directory should be: readdir fails with ENOTDIR, not ENOENT.
+    const migrationsPath = join(root, 'migrations')
+    await writeFile(migrationsPath, '')
+    let codemodsCreated = false
+    const command = {
+      app: { migrationsPath: () => migrationsPath },
+      logger: { info() {} },
+      createCodemods: async () => {
+        codemodsCreated = true
+        return { makeUsingStub: async () => {} }
+      },
+    } as unknown as Configure
+
+    await assert.rejects(() => configure(command), /ENOTDIR/)
+    assert.isFalse(codemodsCreated)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

@@ -47,7 +47,9 @@ const addNote: Operation<{ body: string }, { proofToken: string }, { noteId: num
   work: async ({ trx, payload }) => ({ noteId: 1 }),
 }
 
-// In a controller: pass the client's authorization through untouched.
+// In a controller. actorId and scopeId come from your own authentication and authorization,
+// never from the request body; commandId and requestKey are the client's retry identifiers.
+// Pass the client's authorization through untouched.
 return execute(db.connection(), addNote, {
   actorId,
   scopeId,

@@ -10,7 +10,11 @@ const MIGRATION_SUFFIX = '_create_request_receipts_table.ts'
 /** Publishes the receipts migration once. A second run leaves the existing migration alone. */
 export async function configure(command: Configure) {
   const migrationsPath = command.app.migrationsPath()
-  const existing = await readdir(migrationsPath).catch(() => [] as string[])
+  const existing = await readdir(migrationsPath).catch((error: NodeJS.ErrnoException) => {
+    // A new app has no migrations directory yet; any other read failure must stop configure.
+    if (error.code === 'ENOENT') return [] as string[]
+    throw error
+  })
   if (existing.some((file) => file.endsWith(MIGRATION_SUFFIX))) {
     command.logger.info('request receipts migration already exists, skipping')
     return
