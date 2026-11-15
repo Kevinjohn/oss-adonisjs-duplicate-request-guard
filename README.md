@@ -111,7 +111,14 @@ const addPlainNote: Operation<{ body: string }, undefined, { noteId: number }> =
   `E_UNAWAITED_NESTED_COMMAND`, since it would outlive the command that should have awaited it.
 - **Original errors.** If SQLite already rolled back the whole transaction (`INSERT OR ROLLBACK`, a
   busy abort), the original error, such as `SQLITE_BUSY`, is rethrown; the failed savepoint cleanup
-  is attached as its `cause` when it has none.
+  is attached as its `cause` when it has none. That transaction is over even though Lucid still
+  reports it open: do not catch the error and carry on, roll the transaction back and start a new
+  one. Until you do, `executeIn` on that client or on any child transaction of it is refused with
+  `E_TRANSACTION_LOST`, and a command still open around the failed one stops at its next
+  checkpoint. A transaction ended by one of your own queries is refused the same way once a
+  command has run on it and seen that; a child transaction you open before any command reopens a
+  transaction the package cannot tell from the original. Your own later queries on that client
+  autocommit.
 - **Reruns and failures.** An owner may roll back and rerun the callback, so policies and `work`
   must be database-only and safe to rerun. Any failure rolls the savepoint back, even when the host
   catches it and commits. A failed fresh command leaves no pending receipt or partial work, so its
@@ -142,5 +149,5 @@ const addPlainNote: Operation<{ body: string }, undefined, { noteId: number }> =
 `E_DUPLICATE_REQUEST_IN_PROGRESS` (409, only on re-entry from the command's own `work` or policies),
 `E_INVALID_COMMAND_VALUE` (400), `E_CONCURRENT_COMMAND`, `E_UNAWAITED_NESTED_COMMAND`,
 `E_INVALID_COMMAND_RESULT`, `E_RECEIPT_NOT_PENDING`,
-`E_RECEIPT_SCHEMA` (receipts table from an older stub), `E_TRANSACTION_OWNER`,
+`E_RECEIPT_SCHEMA` (receipts table from an older stub), `E_TRANSACTION_LOST`, `E_TRANSACTION_OWNER`,
 `E_UNSAFE_SQLITE_POOL`, `E_UNSUPPORTED_DIALECT` (500).

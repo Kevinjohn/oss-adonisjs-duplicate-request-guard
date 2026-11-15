@@ -12,6 +12,7 @@ import {
   ReceiptSchemaException,
   ConcurrentCommandException,
   UnawaitedNestedCommandException,
+  TransactionLostException,
   TransactionOwnerException,
   UnsafeSqlitePoolException,
   UnsupportedDialectException,
@@ -167,6 +168,8 @@ interface Frame {
   closing: boolean
   /** Every nested command started under this one, so it can wait for them before rolling back. */
   children: Frame[]
+  /** The trx's driver connection, known from the command's first checkpoint on. */
+  connection?: DriverConnection
   /** This command's run, settled before its parent may roll back. */
   run?: Promise<unknown>
 }
@@ -175,6 +178,61 @@ interface Frame {
 const commandFrame = new AsyncLocalStorage<Frame>()
 /** Open commands per transaction, outermost first. */
 const openCommands = new WeakMap<TransactionClientContract, Frame[]>()
+
+/** The driver connection a transaction is bound to: better-sqlite3's Database. */
+interface DriverConnection {
+  inTransaction?: boolean
+}
+
+/**
+ * Connections whose transaction SQLite ended underneath its Lucid client (`INSERT OR ROLLBACK`, a
+ * busy abort). The client, and every child transaction made from it, still reports a transaction,
+ * but statements now autocommit and a new savepoint is outermost, so its release commits. The mark
+ * is on the connection because all of those clients share it, and it lasts until the owner gives
+ * the connection back to the pool, which is when the lost transaction is really over.
+ */
+const lostConnections = new WeakSet<DriverConnection>()
+
+/** A knex transaction always resolves its own bound connection. */
+function connectionOf(trx: TransactionClientContract) {
+  return (
+    trx.knexClient as unknown as { client: { acquireConnection(): Promise<DriverConnection> } }
+  ).client.acquireConnection()
+}
+
+/** Refuses every later command on the connection until the pool gets it back. */
+function markLost(trx: TransactionClientContract, connection: DriverConnection) {
+  if (lostConnections.has(connection)) return
+  lostConnections.add(connection)
+  // Query and transaction clients share the dialect, which holds the query client and its connection.
+  const pool = (
+    trx.dialect as unknown as {
+      client: { connection: { client: { client: { pool: PoolEvents } } } }
+    }
+  ).client.connection.client.client.pool
+  const onRelease = (released: unknown) => {
+    if (released !== connection) return
+    lostConnections.delete(connection)
+    pool.removeListener('release', onRelease)
+  }
+  pool.on('release', onRelease)
+}
+
+interface PoolEvents {
+  on(event: 'release', listener: (resource: unknown) => void): void
+  removeListener(event: 'release', listener: (resource: unknown) => void): void
+}
+
+/**
+ * Binds the command to its connection and asks better-sqlite3 whether a transaction is still open
+ * on it: a host query may have ended it before this command started. Anything but a confirmed open
+ * transaction is treated as lost.
+ */
+async function assertTransactionOpen(frame: Frame) {
+  const connection = (frame.connection = await connectionOf(frame.trx))
+  if (connection.inTransaction !== true) markLost(frame.trx, connection)
+  assertLive(frame)
+}
 
 /**
  * Test-only seams, not exported from the package entry: `onClosing` runs when a command starts to
@@ -231,10 +289,14 @@ async function abortChildren(frame: Frame) {
 
 /**
  * Checked before each of the command's own statements and before each policy and `work`: an
- * aborted command stops at its next checkpoint and rolls back. User code already running can still
+ * aborted command stops at its next checkpoint and rolls back, and so does every command on a
+ * connection whose transaction SQLite already ended. User code already running can still
  * write, but its parent waits for it, so those writes stay inside the parent's open savepoint.
  */
 function assertLive(frame: Frame) {
+  if (frame.connection && lostConnections.has(frame.connection)) {
+    throw new TransactionLostException()
+  }
   if (frame.aborted) throw new UnawaitedNestedCommandException()
 }
 
@@ -287,6 +349,7 @@ async function runClaimed<Payload, Authorization, Result>(
   // Take SQLite's writer lock before the first read. A deferred transaction that reads and then
   // writes fails with SQLITE_BUSY_SNAPSHOT when another process committed in between.
   assertLive(frame)
+  await assertTransactionOpen(frame)
   await trx.rawQuery(`UPDATE ${RECEIPTS_TABLE} SET id = id WHERE 0`)
   // Validate before any policy runs: a payload that cannot be hashed faithfully is the client's error.
   const payloadHash = createHash('sha256')
@@ -327,26 +390,28 @@ async function runClaimed<Payload, Authorization, Result>(
  * Rolls the savepoint back. When SQLite already rolled back the whole transaction (INSERT OR
  * ROLLBACK, a busy abort), the savepoint is gone; the original error must still surface, because
  * retriers such as Account Kit test its code. The cleanup error becomes its `cause` if it has none.
+ * A rollback that cannot be confirmed marks the connection lost: later commands on it are refused.
  */
 async function rollBack(trx: TransactionClientContract, savepoint: string, error: unknown) {
   try {
     await trx.rawQuery(`ROLLBACK TO SAVEPOINT ${savepoint}`)
     await trx.rawQuery(`RELEASE SAVEPOINT ${savepoint}`)
   } catch (cleanup) {
+    markLost(trx, await connectionOf(trx))
     attachCause(error, cleanup)
   }
 }
 
 /**
- * Gives an error without a `cause` the given one. A frozen error or a read-only `cause` keeps the
- * host's error as it is: the rollback that follows must never be skipped over an annotation.
+ * Gives an error without a `cause` the given one. A frozen error, a read-only `cause` or a `cause`
+ * accessor that throws keeps the host's error as it is: reading and writing both stay inside the
+ * try, because the rollback that follows must never be skipped over an annotation.
  */
 function attachCause(error: unknown, cause: unknown) {
-  if (!(error instanceof Error) || error.cause !== undefined) return
   try {
-    error.cause = cause
+    if (error instanceof Error && error.cause === undefined) error.cause = cause
   } catch {
-    // Not writable: the error surfaces unannotated.
+    // Not readable or not writable: the error surfaces unannotated.
   }
 }
 
