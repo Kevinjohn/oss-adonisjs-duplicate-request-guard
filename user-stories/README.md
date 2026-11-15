@@ -1,6 +1,6 @@
 # User story catalogue
 
-Source baseline: `2b467f13741f4e2ac598a2d5de49369105965a5b` (origin/main, 2026-11-14). Scope: public exports and operation contract, fresh execution and replay, transaction composition, concurrency/nesting failure behavior, SQLite connection constraints, and pruning. Source-reviewed only; no runtime journeys were exercised for this catalogue.
+Source baseline: `6ff12225c8a7698d145798ad705e7a9d5f193c45` (origin/main, 2026-11-14). Scope: public exports and operation contract, fresh execution and replay, transaction composition, concurrency/nesting failure behavior, SQLite connection constraints, and pruning. Source-reviewed only; no runtime journeys were exercised for this catalogue.
 
 ## Index
 
