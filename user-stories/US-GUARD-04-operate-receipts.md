@@ -12,6 +12,7 @@ As an application operator, I want to configure the receipt table and a supporte
 ## Acceptance criteria
 
 - Configure publishes the receipts migration once; an existing filename with `_create_request_receipts_table.ts` suffix is left unchanged.
+- A missing migrations directory counts as no existing migration and the migration is published. Any other read failure of the migrations directory (for example permissions, or a file in its place) stops configure with that error before anything is published; fix the directory and rerun.
 - The migration creates `request_receipts` with unique operation/command-ID and operation/request-key indexes. An outdated cross-actor unique index can produce `E_RECEIPT_SCHEMA`; the host must use the current schema.
 - Public operations require better-sqlite3 and pool maximum one. A competing open Lucid connection is refused when another still-open connection to the same resolved database file was already registered by guarded operations; closed owners are pruned. Unregistered external writers are not detected. Each in-memory connection is independent.
 - The package provides APIs and a migration hook, without mounting HTTP routes or a scheduled cleanup job.
@@ -21,7 +22,11 @@ As an application operator, I want to configure the receipt table and a supporte
 ```mermaid
 flowchart TD
     A["Operator configures one SQLite writer connection"] --> B["Run configure"]
-    B --> C{"Migration already published?"}
+    B --> R{"Migrations directory readable?"}
+    R -->|Missing| E
+    R -->|Unreadable| X["Configure fails; nothing published; fix directory and rerun"]
+    X --> B
+    R -->|Yes| C{"Migration already published?"}
     C -->|Yes| D["Existing file remains unchanged"]
     C -->|No| E["Publish receipt migration"]
     D --> M["Host runs Lucid migrations"]
@@ -38,8 +43,11 @@ Scope: configure publication and connection validation; application migration ex
 
 ```mermaid
 flowchart TD
-    A["configure(command)"] --> B["readdir migrations and check suffix"]
-    B --> C{"Suffix exists?"}
+    A["configure(command)"] --> B["readdir(migrationsPath)"]
+    B --> R{"Read error?"}
+    R -->|ENOENT| E
+    R -->|Other error| X["Rethrow before createCodemods"]
+    R -->|No| C{"Suffix exists?"}
     C -->|Yes| D["Log skip and return from configure"]
     D --> F
     C -->|No| E["codemods.makeUsingStub publishes migration"]
