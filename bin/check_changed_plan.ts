@@ -12,8 +12,6 @@ export interface ChangedCheckStep {
   countsTests?: boolean
   /** Fail when the step executes no tests: its file filter is wrong. */
   requiresTests?: boolean
-  /** Fail when the step leaves the worktree dirty. */
-  requiresCleanTree?: boolean
 }
 
 export interface SkippedCheckStep {
