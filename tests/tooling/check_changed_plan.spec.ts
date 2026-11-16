@@ -1,4 +1,8 @@
-import { readFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { test } from '@japa/runner'
 import {
   executedTests,
@@ -72,9 +76,30 @@ test('deleted files select checks but are never passed to tools', ({ assert }) =
 test('formats only existing files and leaves the lockfile to pnpm', ({ assert }) => {
   const commands = ran(planChangedChecks(changed('README.md', 'pnpm-lock.yaml')))
 
-  assert.deepEqual(commands.format.slice(-1), ['README.md'])
+  assert.deepEqual(commands.format.slice(-2), ['--', 'README.md'])
   assert.include(commands.format, '--ignore-unknown')
   assert.include(commands.format, '--no-error-on-unmatched-pattern')
+})
+
+test('changed paths follow an end-of-options marker so a dashed name is a file', ({ assert }) => {
+  const { format } = ran(planChangedChecks(changed('-h.md', '--write.md')))
+
+  assert.deepEqual(format.slice(-3), ['--', '-h.md', '--write.md'])
+})
+
+test('the real formatter checks dashed filenames as files', async ({ assert, cleanup }) => {
+  const directory = await mkdtemp(join(os.tmpdir(), 'duplicate-request-guard-prettier-'))
+  cleanup(() => rm(directory, { recursive: true, force: true }))
+  await writeFile(join(directory, '-h.md'), 'a  b\n')
+  await writeFile(join(directory, '--write.md'), 'ok\n')
+  const prettier = fileURLToPath(new URL('../../node_modules/.bin/prettier', import.meta.url))
+  const { format } = ran(planChangedChecks(changed('-h.md', '--write.md')))
+  const result = spawnSync(prettier, format.slice(3), { cwd: directory, encoding: 'utf8' })
+
+  assert.equal(result.status, 1, result.stderr)
+  assert.include(result.stderr, '[warn] -h.md')
+  assert.notInclude(result.stderr, '--write.md')
+  assert.equal(await readFile(join(directory, '-h.md'), 'utf8'), 'a  b\n')
 })
 
 test('formatter configuration checks the whole tree', ({ assert }) => {

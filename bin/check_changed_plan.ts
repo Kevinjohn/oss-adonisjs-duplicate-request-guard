@@ -95,6 +95,8 @@ export function planChangedChecks(
           '--check',
           '--ignore-unknown',
           '--no-error-on-unmatched-pattern',
+          // Without `--`, a file named like `-h.md` is parsed as an option.
+          '--',
           ...formattable,
         ]),
     // The repository's own lint script carries the zero-warning limit for every caller.
