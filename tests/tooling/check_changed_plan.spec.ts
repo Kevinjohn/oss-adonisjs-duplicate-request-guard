@@ -49,6 +49,14 @@ test('files the specs read run the full suite without building the package', ({ 
   }
 })
 
+test('a story edit is formatted and tested without building the package', ({ assert }) => {
+  const commands = ran(planChangedChecks(changed('user-stories/nested/REFERENCE.md')))
+
+  assert.deepEqual(commands.format.slice(-2), ['--', 'user-stories/nested/REFERENCE.md'])
+  assert.deepEqual(commands.tests, ['pnpm', 'quick:test'])
+  assert.notProperty(commands, 'build')
+})
+
 test('lockfile and workspace changes run lint and typecheck', ({ assert }) => {
   for (const path of ['pnpm-lock.yaml', 'pnpm-workspace.yaml']) {
     assert.properties(ran(planChangedChecks(changed(path))), ['lint', 'typecheck'], path)
