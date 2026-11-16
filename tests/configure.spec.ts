@@ -40,14 +40,19 @@ test('configure publishes the receipts migration once, and it works', async ({ a
       })
       .create(pathToFileURL(`${root}/`), { importer })
 
+    // First run on a fresh app: no migrations directory exists yet.
+    const migrationsDir = join(root, 'database/migrations')
     await ignitor.ace().handle(['configure', PACKAGE])
-    await mkdir(join(root, 'database/migrations'), { recursive: true })
-    await ignitor.ace().handle(['configure', PACKAGE])
-    const files = await readdir(join(root, 'database/migrations'))
+    const files = await readdir(migrationsDir)
     assert.lengthOf(files, 1)
     assert.match(files[0], /^\d+_create_request_receipts_table\.ts$/)
+    const published = await readFile(join(migrationsDir, files[0]), 'utf8')
 
-    const published = await readFile(join(root, 'database/migrations', files[0]), 'utf8')
+    // A rerun keeps the first file and its contents.
+    await ignitor.ace().handle(['configure', PACKAGE])
+    assert.deepEqual(await readdir(migrationsDir), files)
+    assert.equal(await readFile(join(migrationsDir, files[0]), 'utf8'), published)
+
     const Migration = await loadMigration(published)
     const { client } = await createDatabase()
     await client.schema.dropTable('request_receipts')
