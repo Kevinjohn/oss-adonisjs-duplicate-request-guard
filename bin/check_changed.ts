@@ -166,6 +166,7 @@ function run(
     let output = ''
     let spawnError: Error | undefined
     let timedOut = false
+    let graceTimer: NodeJS.Timeout | undefined
     child.stdout.on('data', (chunk) => (output += chunk))
     child.stderr.on('data', (chunk) => (output += chunk))
     const timer = setTimeout(() => {
@@ -176,6 +177,12 @@ function run(
       } catch (error) {
         output += `[check:changed] timeout cleanup failed: ${describeError(error)}\n`
       }
+      // A killed group normally closes at once; do not wait forever for a close that never comes.
+      graceTimer = setTimeout(
+        () =>
+          abandonActive?.(new Error('The owned child did not close after the timeout SIGKILL.')),
+        reapGraceMs
+      )
     }, stepLimitMs)
     child.once('error', (error) => {
       spawnError = error
@@ -195,6 +202,7 @@ function run(
       if (settled) return
       settled = true
       clearTimeout(timer)
+      clearTimeout(graceTimer)
       let cleanupError: unknown = terminalError
       if (interruptedBy && interruptionCleanup) {
         try {

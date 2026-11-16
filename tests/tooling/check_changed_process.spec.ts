@@ -210,3 +210,43 @@ require('node:module').syncBuiltinESMExports()
   assert.match(result.text, /LOCAL_HANDLE_RELEASED/)
   assert.equal(await readFile(f.log, 'utf8'), '')
 }).timeout(10_000)
+
+test('a timed-out child that never closes still settles with a timeout failure', async ({
+  cleanup,
+}) => {
+  const f = await fixture()
+  cleanup(() => rm(f.directory, { recursive: true, force: true }))
+  const hook = path.join(f.directory, 'timeout-never-close.cjs')
+  await writeFile(
+    hook,
+    `
+const cp = require('node:child_process')
+const { EventEmitter } = require('node:events')
+const { PassThrough } = require('node:stream')
+cp.spawn = () => {
+ const child = new EventEmitter(); child.pid = 99999999; child.exitCode = child.signalCode = null
+ child.stdout = new PassThrough(); child.stderr = new PassThrough()
+ const liveHandle = setInterval(() => {}, 1000)
+ child.unref = () => { clearInterval(liveHandle); console.log('LOCAL_HANDLE_RELEASED') }
+ setImmediate(() => child.stdout.write('partial output'))
+ return child
+}
+process.kill = () => true
+// Deliver the step timeout and its grace timer at once instead of after minutes.
+const realSetTimeout = global.setTimeout
+global.setTimeout = (callback, delay, ...rest) => realSetTimeout(callback, delay >= 5000 ? 5 : delay, ...rest)
+require('node:module').syncBuiltinESMExports()
+`
+  )
+  f.env.NODE_OPTIONS = `${f.env.NODE_OPTIONS ?? ''} --require=${hook}`
+  const child = launch(f)
+  const output = await outputOf(child)
+  const result = await collectExit(child, output)
+  assert.equal(result.code, 1, result.text)
+  assert.match(result.text, /fail format \(exit killed\)/)
+  assert.match(result.text, /stopped after 15 minutes/)
+  assert.match(result.text, /cleanup failed:.*did not close after the timeout SIGKILL/s)
+  assert.match(result.text, /partial output/)
+  assert.match(result.text, /LOCAL_HANDLE_RELEASED/)
+  assert.equal(await readFile(f.log, 'utf8'), '')
+}).timeout(10_000)
