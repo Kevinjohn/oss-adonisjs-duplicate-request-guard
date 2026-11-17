@@ -17,12 +17,17 @@ node ace configure @kevinjohn/adonisjs-duplicate-request-guard   # publishes the
 node ace migration:run
 ```
 
+`configure` writes the migration to the app's migrations directory (`app.migrationsPath()`,
+`database/migrations` by default). If a connection sets its own `migrations.paths` without that
+directory, move the file into one of those paths, or add the directory to them, before
+`migration:run`.
+
 Peers: `@adonisjs/core` ^7.0.0, `@adonisjs/lucid` ^22.0.0. Node >= 24. Each release lists its
 archive's SHA-256.
 
 ## User stories
 
-See the [user story catalogue](user-stories/README.md) for source-reviewed command behavior, transaction boundaries, replay policy and operations.
+See the [user story catalogue](https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/blob/main/user-stories/README.md) for source-reviewed command behavior, transaction boundaries, replay policy and operations.
 
 ## Use
 
@@ -39,7 +44,10 @@ const addNote: Operation<{ body: string }, { proofToken: string }, { noteId: num
     /* runs on every replay */
   },
   parseAuthorization: (raw) => {
-    /* validate the opaque input; fresh reservations only */
+    // Validate the opaque input and return the typed authorization; fresh reservations only.
+    const proofToken = (raw as { proofToken?: unknown } | null | undefined)?.proofToken
+    if (typeof proofToken !== 'string') throw new Error('proof token required')
+    return { proofToken }
   },
   authorizeExecute: async ({ trx }, auth) => {
     /* e.g. consume a proof */
@@ -86,7 +94,10 @@ const addPlainNote: Operation<{ body: string }, undefined, { noteId: number }> =
 - **Owners.** `execute` opens and commits its own transaction, once, without retrying. Inside a
   transaction you own (for example Account Kit `withCurrent`), call `executeIn(trx, ...)`. The two
   are mutually exclusive: `execute` rejects a transaction client, `executeIn` requires one. Wrapping
-  either in your own retry loop is unsupported.
+  either in your own retry loop is unsupported. `execute(db.connection(), ...)` called from inside
+  another transaction is not detected, because the base connection is not a transaction client: the
+  outer transaction holds the pool's only connection, so the call waits and fails with knex's
+  acquire timeout. Pass the active transaction to `executeIn` instead.
 - **Savepoint.** Reservation and the fresh path run under a raw SQL savepoint on the caller's
   transaction, so `context.trx` is that same transaction. Commands compose: `work` may call
   `executeIn(trx, ...)` for another command, open `trx.transaction()`, or query `trx` directly.
