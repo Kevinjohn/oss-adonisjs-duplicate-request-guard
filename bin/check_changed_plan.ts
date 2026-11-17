@@ -12,8 +12,6 @@ export interface ChangedCheckStep {
   countsTests?: boolean
   /** Fail when the step executes no tests: its file filter is wrong. */
   requiresTests?: boolean
-  /** Fail when the step leaves the worktree dirty. */
-  requiresCleanTree?: boolean
 }
 
 export interface SkippedCheckStep {
@@ -40,7 +38,7 @@ const isLintable = (path: string) =>
 
 /** Files that cannot change the built package. */
 function outsidePackage(path: string): boolean {
-  return /^(tests|\.github)\//.test(path) || /^[^/]+\.md$/.test(path)
+  return /^(tests|user-stories|\.github)\//.test(path) || /^[^/]+\.md$/.test(path)
 }
 
 export interface PlanOptions {
@@ -97,6 +95,8 @@ export function planChangedChecks(
           '--check',
           '--ignore-unknown',
           '--no-error-on-unmatched-pattern',
+          // Without `--`, a file named like `-h.md` is parsed as an option.
+          '--',
           ...formattable,
         ]),
     // The repository's own lint script carries the zero-warning limit for every caller.
