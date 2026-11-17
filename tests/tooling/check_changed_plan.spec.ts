@@ -102,7 +102,12 @@ test('the real formatter checks dashed filenames as files', async ({ assert, cle
   await writeFile(join(directory, '--write.md'), 'ok\n')
   const prettier = fileURLToPath(new URL('../../node_modules/.bin/prettier', import.meta.url))
   const { format } = ran(planChangedChecks(changed('-h.md', '--write.md')))
-  const result = spawnSync(prettier, format.slice(3), { cwd: directory, encoding: 'utf8' })
+  // Colour off: CI forces it on, and a coloured "[warn]" would not match.
+  const result = spawnSync(prettier, format.slice(3), {
+    cwd: directory,
+    encoding: 'utf8',
+    env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+  })
 
   assert.equal(result.status, 1, result.stderr)
   assert.include(result.stderr, '[warn] -h.md')
