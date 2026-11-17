@@ -290,8 +290,9 @@ function claim(trx: TransactionClientContract): Frame {
   if (innermost !== (caller?.trx === trx ? caller : undefined)) {
     throw new ConcurrentCommandException()
   }
-  // A child that arrives after its parent stopped waiting for children would outlive it.
-  if (innermost?.closing) throw new UnawaitedNestedCommandException()
+  // A child that arrives after its parent stopped waiting for children would outlive it; one from an
+  // aborted command would run work that is about to be rolled back.
+  if (innermost?.closing || innermost?.aborted) throw new UnawaitedNestedCommandException()
   const frame: Frame = { trx, aborted: false, closing: false, children: [] }
   innermost?.children.push(frame)
   stack.push(frame)
@@ -307,15 +308,27 @@ function unclaim(frame: Frame) {
   if (index !== -1) stack.splice(index, 1)
 }
 
+/** The nested commands started under this one that are still open. */
+function openChildren(frame: Frame) {
+  return frame.children.filter((child) => openCommands.get(frame.trx)?.includes(child))
+}
+
+/** Marks the command and every open command nested under it aborted. */
+function abort(frame: Frame) {
+  frame.aborted = true
+  for (const child of openChildren(frame)) abort(child)
+}
+
 /**
- * Before a command rolls back: marks every nested command still open as aborted, so each stops at
- * its next checkpoint, then waits for all of them to settle. Until then this command's savepoint
- * stays open, so anything a nested command wrote, before or after the abort, is inside it and the
- * rollback removes it. Returns the aborted commands' errors.
+ * Before a command rolls back: marks every nested command still open, at any depth, as aborted, so
+ * each stops at its next checkpoint, then waits for its direct children to settle (each waits for
+ * its own). Until then this command's savepoint stays open, so anything a nested command wrote,
+ * before or after the abort, is inside it and the rollback removes it. Returns the aborted direct
+ * children's errors.
  */
 async function abortChildren(frame: Frame) {
-  const open = frame.children.filter((child) => openCommands.get(frame.trx)?.includes(child))
-  for (const child of open) child.aborted = true
+  const open = openChildren(frame)
+  for (const child of open) abort(child)
   internalHooks.onUnwind?.()
   const settled = await Promise.allSettled(frame.children.map((child) => child.run))
   return settled.flatMap((result, index) =>

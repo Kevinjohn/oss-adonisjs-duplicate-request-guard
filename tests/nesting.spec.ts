@@ -554,3 +554,86 @@ test.group('no new children once a command is closing', (group) => {
     })
   }
 })
+
+test.group('an aborted branch admits and continues nothing', (group) => {
+  group.each.teardown(() => {
+    internalHooks.onUnwind = undefined
+  })
+
+  /**
+   * Parent work starts a child and fails once `ready` fires. The parent's unwind, after it has
+   * marked its open children aborted, releases the child's barrier.
+   */
+  function branch() {
+    const parent = named('notes.parent')
+    const child = named('notes.child')
+    const grandchild = named('notes.grandchild')
+    const ready = signal()
+    const release = signal()
+    let pending: Promise<unknown> = Promise.resolve()
+    parent.hooks.afterWork = async ({ trx }) => {
+      pending = executeIn(trx, child.operation, auth(2))
+      internalHooks.onUnwind = () => {
+        internalHooks.onUnwind = undefined
+        release.fire()
+      }
+      await ready.fired
+      throw new Error('parent failed')
+    }
+    const run = async (client: Awaited<ReturnType<typeof createDatabase>>['client']) => {
+      for (const n of [1, 2, 3]) await addProof(client, `p${n}`)
+      const host = await within(
+        client.transaction(async (trx) => {
+          const result = await Promise.allSettled([executeIn(trx, parent.operation, auth(1))])
+          return [...result, ...(await Promise.allSettled([pending]))]
+        })
+      )
+      return host.map(codeOf)
+    }
+    return { child, grandchild, ready, release, run }
+  }
+
+  test('a grandchild started after the unwind is refused before any policy', async ({ assert }) => {
+    const { client } = await createDatabase()
+    const { child, grandchild, ready, release, run } = branch()
+    let grandCode = ''
+    child.hooks.beforeWork = async ({ trx }) => {
+      ready.fire()
+      await release.fired
+      grandCode = await executeIn(trx, grandchild.operation, auth(3)).then(
+        () => 'fulfilled',
+        (error: { code?: string }) => error.code ?? 'other'
+      )
+    }
+    assert.deepEqual(await run(client), ['parent failed', 'E_UNAWAITED_NESTED_COMMAND'])
+    assert.equal(grandCode, 'E_UNAWAITED_NESTED_COMMAND')
+    assert.equal(grandchild.calls.access, 0)
+    assert.deepEqual(await committed(client), [])
+    assert.equal(await count(client, 'notes'), 0)
+  })
+
+  test('an already-open grandchild stops at its next checkpoint', async ({ assert }) => {
+    const { client } = await createDatabase()
+    const { child, grandchild, ready, release, run } = branch()
+    let grandCode = ''
+    child.hooks.beforeWork = async ({ trx }) => {
+      grandCode = await executeIn(trx, grandchild.operation, auth(3)).then(
+        () => 'fulfilled',
+        (error: { code?: string }) => error.code ?? 'other'
+      )
+    }
+    grandchild.hooks.afterAccess = async () => {
+      ready.fire()
+      await release.fired
+    }
+    assert.deepEqual(await run(client), ['parent failed', 'E_UNAWAITED_NESTED_COMMAND'])
+    assert.equal(grandCode, 'E_UNAWAITED_NESTED_COMMAND')
+    assert.equal(grandchild.calls.access, 1)
+    assert.deepEqual(
+      [grandchild.calls.parse, grandchild.calls.execute, grandchild.calls.work],
+      [0, 0, 0]
+    )
+    assert.deepEqual(await committed(client), [])
+    assert.equal(await count(client, 'notes'), 0)
+  })
+})
