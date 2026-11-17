@@ -461,15 +461,20 @@ test.group('host queries while a command is open (documented rule)', () => {
     const { client } = await createDatabase()
     await addProof(client, 'p1')
     const a = named('notes.a')
+    const aInWork = signal()
+    const hostWrote = signal()
+    // A is open, inside its work, until the host's write has run.
     a.hooks.afterWork = async () => {
-      await sleep(50)
+      aInWork.fire()
+      await hostWrote.fired
       throw new Error('A failed')
     }
     await within(
       client.transaction(async (trx) => {
         const pendingA = executeIn(trx, a.operation, auth(1)).catch(() => null)
-        await sleep(10)
+        await aInWork.fired
         await trx.table('notes').insert({ scope_id: 's1', body: 'host write' })
+        hostWrote.fire()
         await pendingA
       })
     )
