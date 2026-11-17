@@ -99,10 +99,23 @@ function assertIdentity(commandId: string, requestKey: string) {
 interface LucidConnection {
   name: string
   client?: unknown
+  once(event: 'disconnect', listener: () => void): unknown
 }
 
-/** Real path of a SQLite file → the open Lucid connections that ran commands against it. */
-const fileWriters = new Map<string, Set<LucidConnection>>()
+/**
+ * Real path of a SQLite file → the open Lucid connections that ran commands against it. Exported
+ * for tests only; not re-exported from the package entry.
+ */
+export const fileWriters = new Map<string, Set<LucidConnection>>()
+
+/** Forgets a closed connection, and its file once no open connection uses it. */
+function releaseWriter(file: string, connection: LucidConnection) {
+  // Lucid unsets `client` and emits 'disconnect' in one synchronous step, so the lazy sweep has not
+  // removed this connection yet: its set, and so the key, are still here.
+  const writers = fileWriters.get(file) as Set<LucidConnection>
+  writers.delete(connection)
+  if (writers.size === 0) fileWriters.delete(file)
+}
 
 /** The file's real path. A file not created yet resolves through its directory's real path. */
 function realFile(filename: string) {
@@ -143,6 +156,7 @@ export function assertSupportedConnection(client: QueryClientContract | Transact
   const connection = (client.dialect as unknown as { client: { connection: LucidConnection } })
     .client.connection
   const writers = fileWriters.get(file) ?? new Set<LucidConnection>()
+  // Fallback for a close that never emitted 'disconnect' (for example a listener removed by the host).
   for (const writer of writers) {
     if (writer.client === undefined) writers.delete(writer)
   }
@@ -152,7 +166,11 @@ export function assertSupportedConnection(client: QueryClientContract | Transact
       `SQLite connections "${other.name}" and "${connection.name}" share ${file}; run guarded commands through one connection`
     )
   }
-  writers.add(connection)
+  if (!writers.has(connection)) {
+    writers.add(connection)
+    // Lucid emits it once the connection's pool is destroyed (manager.close, closeAll, patch).
+    connection.once('disconnect', () => releaseWriter(file, connection))
+  }
   fileWriters.set(file, writers)
 }
 

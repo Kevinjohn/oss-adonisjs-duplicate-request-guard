@@ -1,4 +1,5 @@
 import { test } from '@japa/runner'
+import { realpathSync } from 'node:fs'
 import { mkdir, symlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { AppFactory } from '@adonisjs/core/factories/app'
@@ -7,6 +8,7 @@ import { Emitter } from '@adonisjs/core/events'
 import { Database } from '@adonisjs/lucid/database'
 import * as api from '../index.js'
 import { assertSupportedConnection, execute, executeIn, pruneReceipts } from '../index.js'
+import { fileWriters } from '../src/receipts.js'
 import { addProof, createDatabase, errors, input, noteOperation, prepareSchema } from './helpers.js'
 
 function sqliteDatabase(filename: string) {
@@ -58,6 +60,34 @@ test.group('shared SQLite file detection', () => {
       authorization: { proofToken: 'p2' },
     })
     assert.isFalse(outcome.replayed)
+  })
+
+  test('closing connections on distinct files leaves nothing in the registry', async ({
+    assert,
+  }) => {
+    const { file } = await createDatabase()
+    const dir = realpathSync(dirname(file))
+    for (const n of [1, 2, 3]) {
+      const db = sqliteDatabase(join(dir, `tenant${n}.sqlite3`))
+      const connection = db.connection()
+      // Repeated use registers one disconnect listener, beside Lucid's own.
+      for (let i = 0; i < 3; i++) assertSupportedConnection(connection)
+      const lucid = db.manager.get('sqlite')?.connection
+      assert.equal(lucid?.listenerCount('disconnect'), 2)
+      assert.isTrue(fileWriters.has(join(dir, `tenant${n}.sqlite3`)))
+      await db.manager.closeAll()
+      assert.isFalse(fileWriters.has(join(dir, `tenant${n}.sqlite3`)))
+    }
+  })
+
+  test('a closed connection that never emitted disconnect is still swept', async ({ assert }) => {
+    const { db, file } = await createDatabase()
+    db.manager.add('first', { client: 'better-sqlite3', connection: { filename: file } })
+    assertSupportedConnection(db.connection('first'))
+    // A host that strips the connection's listeners: the close below emits to no one.
+    db.manager.get('first')?.connection?.removeAllListeners('disconnect')
+    await db.manager.close('first')
+    assert.doesNotThrow(() => assertSupportedConnection(db.connection()))
   })
 
   test('a second Database with the same connection name and file is refused', async ({
