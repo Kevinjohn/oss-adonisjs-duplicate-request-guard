@@ -176,8 +176,12 @@ test('a second signal escalates immediately while the first signal determines th
   const descendantPid = await waitForPid(f.ready)
   child.kill('SIGTERM')
   await waitForFile(f.termSent)
+  const secondSignalAt = Date.now()
   child.kill('SIGINT')
   const result = await collectExit(child, output)
+  // Without escalation the first signal's own SIGKILL only arrives after the 5s grace period.
+  const elapsed = Date.now() - secondSignalAt
+  assert.ok(elapsed < 3000, `exit took ${elapsed}ms after the second signal`)
   assert.equal(result.code, 143, result.text)
   assert.equal(await isGone(descendantPid), true)
   assert.doesNotMatch(await readFile(f.log, 'utf8'), /^(lint|typecheck)$/m)
