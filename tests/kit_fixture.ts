@@ -67,7 +67,9 @@ export interface KitFixture {
  * A real AdonisJS app with Lucid, the limiter and Account Kit 0.3.3, after `node ace configure`
  * for the Kit and for this package, with all migrations run.
  */
-export async function bootKit(options: { appMigration?: string } = {}): Promise<KitFixture> {
+export async function bootKit(
+  options: { appMigration?: string; parent?: string } = {}
+): Promise<KitFixture> {
   const cleanups: Array<() => Promise<void>> = []
   // Runs every cleanup, newest first, and reports the first failure after all have run.
   const cleanup = async () => {
@@ -82,7 +84,12 @@ export async function bootKit(options: { appMigration?: string } = {}): Promise<
     if (failure) throw failure
   }
   try {
-    return await boot(options.appMigration ?? appMigration, cleanups, cleanup)
+    return await boot(
+      options.appMigration ?? appMigration,
+      options.parent ?? tmpdir(),
+      cleanups,
+      cleanup
+    )
   } catch (error) {
     // A failed setup must not leave the temporary app or a started application behind.
     await cleanup().catch(() => {})
@@ -92,10 +99,11 @@ export async function bootKit(options: { appMigration?: string } = {}): Promise<
 
 async function boot(
   migration: string,
+  parent: string,
   cleanups: Array<() => Promise<void>>,
   cleanup: () => Promise<void>
 ): Promise<KitFixture> {
-  const root = await mkdtemp(join(tmpdir(), 'adonisjs-duplicate-request-guard-kit-'))
+  const root = await mkdtemp(join(parent, 'adonisjs-duplicate-request-guard-kit-'))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   await writeFile(
     join(root, 'package.json'),
