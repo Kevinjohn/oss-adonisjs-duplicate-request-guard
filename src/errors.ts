@@ -1,6 +1,9 @@
 import { Exception } from '@adonisjs/core/exceptions'
 
-/** The command identity was already used with a different payload, actor, operation or pairing. */
+/**
+ * The command id or request key was already used in this actor's operation with a different
+ * pairing, scope or payload. Another actor or operation is a separate namespace and never conflicts.
+ */
 export class DuplicateRequestConflictException extends Exception {
   static code = 'E_DUPLICATE_REQUEST_CONFLICT'
   static status = 409

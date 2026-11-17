@@ -9,9 +9,9 @@ First release.
 - `execute` (opens its own transaction) and `executeIn` (runs in your transaction). A request's
   receipt is reserved by a unique index and completed with the request's own writes; a repeat gets
   the stored result.
-- Optional `authorizeAccess`, `authorizeReplay`, `parseAuthorization` and `authorizeExecute`
-  policies. Omitted policies allow; a parser is required when the authorization type excludes
-  `undefined`.
+- A required `authorizeAccess` policy, and optional `authorizeReplay`, `parseAuthorization` and
+  `authorizeExecute` policies. An omitted optional policy allows; a parser is required when the
+  authorization type excludes `undefined`.
 - Requests nest safely: one at a time per transaction (`E_CONCURRENT_COMMAND`), unawaited nested
   requests are rolled back (`E_UNAWAITED_NESTED_COMMAND`), and an aborted nested request stops at its
   next checkpoint.
