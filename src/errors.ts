@@ -136,6 +136,22 @@ export class TransactionOwnerException extends Exception {
 }
 
 /**
+ * SQLite ended the host transaction underneath its Lucid client (`INSERT OR ROLLBACK`, a busy
+ * abort), in an earlier command or a host query. Statements on that client would now autocommit, so
+ * guarded commands refuse it: roll the transaction back and start a new one.
+ */
+export class TransactionLostException extends Exception {
+  static code = 'E_TRANSACTION_LOST'
+  static status = 500
+  constructor() {
+    super('SQLite already ended this transaction; roll it back and run the command in a new one', {
+      code: TransactionLostException.code,
+      status: TransactionLostException.status,
+    })
+  }
+}
+
+/**
  * More than one in-process connection could write the SQLite file (a pool above one, or a second
  * named connection on the same file); better-sqlite3 would stall the event loop on its lock.
  */
@@ -159,5 +175,6 @@ export const E_RECEIPT_NOT_PENDING = ReceiptNotPendingException
 export const E_RECEIPT_SCHEMA = ReceiptSchemaException
 export const E_CONCURRENT_COMMAND = ConcurrentCommandException
 export const E_UNAWAITED_NESTED_COMMAND = UnawaitedNestedCommandException
+export const E_TRANSACTION_LOST = TransactionLostException
 export const E_TRANSACTION_OWNER = TransactionOwnerException
 export const E_UNSAFE_SQLITE_POOL = UnsafeSqlitePoolException
