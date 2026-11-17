@@ -17,7 +17,7 @@ Use a new `APP_KEY` in `.env` before sharing or deploying an app. The database i
 
 ## Create a note
 
-Sign up or sign in through the browser. Send the session cookie and CSRF token with the request. A form can include the hidden `_csrf` field; JavaScript can send the token from the page in `X-CSRF-Token`.
+Sign up or sign in through the browser, then open `/notes/demo`. Enter a note and click **Create and retry**. The page uses the starter's session and its actual CSRF token to send the same command twice. It displays the first and replayed response with one note ID. Each click creates fresh identifiers for a new intended note.
 
 Send `POST /notes` with JSON body:
 

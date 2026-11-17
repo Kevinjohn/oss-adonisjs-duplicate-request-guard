@@ -31,3 +31,4 @@ router
   .use(middleware.auth())
 
 router.post('/notes', [controllers.Notes, 'store']).use(middleware.auth())
+router.get('/notes/demo', [controllers.Notes, 'demo']).use(middleware.auth())

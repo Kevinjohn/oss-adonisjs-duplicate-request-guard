@@ -8,6 +8,10 @@ test.group('guarded notes', (group) => {
 
   test('the same command returns its first note and writes one row', async ({ assert, client }) => {
     const user = await User.create({ email: 'notes@example.test', password: 'secret-password' })
+    const demo = await client.get('/notes/demo').withGuard('web').loginAs(user)
+    demo.assertStatus(200)
+    assert.include(demo.text(), "fetch('/notes'")
+    assert.match(demo.text(), /const token = "[^"]+";/)
     const input = { body: 'Remember the meeting', commandId: 'notes-1', requestKey: 'attempt-1' }
     const first = await client
       .post('/notes')
