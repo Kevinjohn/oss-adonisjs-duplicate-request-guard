@@ -17,6 +17,7 @@ pnpm build
 rm -rf tmp/release && mkdir -p tmp/release
 pnpm pack --pack-destination tmp/release >/dev/null
 TARBALL=$(ls tmp/release/*.tgz)
+bash bin/smoke_packed.sh "$TARBALL"
 REPO=${GITHUB_REPOSITORY:-$(git remote get-url origin | sed -E 's#.*github.com[:/]##; s#\.git$##')}
 awk -v h="## $VERSION - " 'index($0, h) == 1 {p=1; next} /^## / {p=0} p' CHANGELOG.md > tmp/release/notes.md
 printf '\n## Install\n\n```sh\npnpm add https://github.com/%s/releases/download/v%s/%s\n```\n\nSHA-256: `%s`\n' \
