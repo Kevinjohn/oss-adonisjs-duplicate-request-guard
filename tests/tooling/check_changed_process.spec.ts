@@ -5,7 +5,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from '@japa/runner'
-import { collectExit, isAlive, outputOf, waitForFile, waitForPid } from './child_process.js'
+import { collectExit, isGone, outputOf, waitForFile, waitForPid } from './child_process.js'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
@@ -163,7 +163,7 @@ test('TERM-resistant descendants receive KILL, are reaped, and block later selec
   assert.equal(result.code, 143, result.text)
   assert.match(result.text, /fail format \(exit killed\)/)
   assert.doesNotMatch(await readFile(f.log, 'utf8'), /^(lint|typecheck)$/m)
-  assert.equal(await isAlive(descendantPid), false)
+  assert.equal(await isGone(descendantPid), true)
   assert.doesNotMatch(result.text, /UnhandledPromiseRejection|unhandledRejection/)
 }).timeout(20_000)
 
@@ -179,7 +179,7 @@ test('a second signal escalates immediately while the first signal determines th
   child.kill('SIGINT')
   const result = await collectExit(child, output)
   assert.equal(result.code, 143, result.text)
-  assert.equal(await isAlive(descendantPid), false)
+  assert.equal(await isGone(descendantPid), true)
   assert.doesNotMatch(await readFile(f.log, 'utf8'), /^(lint|typecheck)$/m)
 }).timeout(15_000)
 

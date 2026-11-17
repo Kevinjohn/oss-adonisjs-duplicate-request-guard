@@ -35,6 +35,19 @@ export async function isAlive(pid: number): Promise<boolean> {
   }
 }
 
+/**
+ * Whether a process is gone within `timeoutMs`. Where there is no /proc (macOS), a killed process
+ * still answers signal 0 until its new parent reaps it, so one immediate check can see it alive.
+ */
+export async function isGone(pid: number, timeoutMs = 2000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (await isAlive(pid)) {
+    if (Date.now() >= deadline) return false
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  return true
+}
+
 /** Poll for a file a child writes, such as a pid file. */
 export async function waitForFile(filePath: string, timeoutMs = 5000): Promise<string> {
   const deadline = Date.now() + timeoutMs
