@@ -13,9 +13,13 @@ test.group('guarded notes', (group) => {
     const replay = await client.post('/api/v1/notes').withGuard('api').loginAs(user).json(input)
     first.assertStatus(201)
     replay.assertStatus(201)
-    assert.deepEqual(first.body(), { replayed: false, result: { noteId: 1 } })
+    assert.equal(first.body().replayed, false)
+    assert.isAbove(first.body().result.noteId, 0)
     assert.deepEqual(replay.body(), { replayed: true, result: first.body().result })
-    assert.deepEqual(await db.from('notes').select('body'), [{ body: input.body }])
+    const notes = await db.from('notes').select('id', 'user_id', 'body')
+    assert.deepEqual(notes, [
+      { id: first.body().result.noteId, user_id: user.id, body: input.body },
+    ])
     const receipts = await db.from('request_receipts').count('* as total')
     assert.equal(receipts[0].total, 1)
   })
