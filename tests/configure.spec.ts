@@ -40,14 +40,19 @@ test('configure publishes the receipts migration once, and it works', async ({ a
       })
       .create(pathToFileURL(`${root}/`), { importer })
 
+    // First run on a fresh app: no migrations directory exists yet.
+    const migrationsDir = join(root, 'database/migrations')
     await ignitor.ace().handle(['configure', PACKAGE])
-    await mkdir(join(root, 'database/migrations'), { recursive: true })
-    await ignitor.ace().handle(['configure', PACKAGE])
-    const files = await readdir(join(root, 'database/migrations'))
+    const files = await readdir(migrationsDir)
     assert.lengthOf(files, 1)
     assert.match(files[0], /^\d+_create_request_receipts_table\.ts$/)
+    const published = await readFile(join(migrationsDir, files[0]), 'utf8')
 
-    const published = await readFile(join(root, 'database/migrations', files[0]), 'utf8')
+    // A rerun keeps the first file and its contents.
+    await ignitor.ace().handle(['configure', PACKAGE])
+    assert.deepEqual(await readdir(migrationsDir), files)
+    assert.equal(await readFile(join(migrationsDir, files[0]), 'utf8'), published)
+
     const Migration = await loadMigration(published)
     const { client } = await createDatabase()
     await client.schema.dropTable('request_receipts')
@@ -83,4 +88,97 @@ test('configure stops when the migrations directory cannot be read', async ({ as
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test.group('configure with an existing matching migrations entry', () => {
+  const NAME = '1_create_request_receipts_table.ts'
+
+  async function run(prepare: (migrations: string, root: string) => Promise<void>): Promise<{
+    root: string
+    logged: string[]
+    codemodsCreated: boolean
+    run: () => Promise<void>
+  }> {
+    const root = await mkdtemp(join(tmpdir(), 'adonisjs-duplicate-request-guard-entry-'))
+    const migrations = join(root, 'migrations')
+    await mkdir(migrations)
+    await prepare(migrations, root)
+    const state = {
+      root,
+      logged: [] as string[],
+      codemodsCreated: false,
+      run: async () => {},
+    }
+    const command = {
+      app: { migrationsPath: (name = '') => join(migrations, name) },
+      logger: { info: (message: string) => state.logged.push(message) },
+      createCodemods: async () => {
+        state.codemodsCreated = true
+        return { makeUsingStub: async () => {} }
+      },
+    } as unknown as Configure
+    state.run = () => configure(command)
+    return state
+  }
+
+  test('a regular file is left alone and skipped', async ({ assert }) => {
+    const state = await run((migrations) => writeFile(join(migrations, NAME), ''))
+    try {
+      await state.run()
+      assert.lengthOf(state.logged, 1)
+      assert.isFalse(state.codemodsCreated)
+    } finally {
+      await rm(state.root, { recursive: true, force: true })
+    }
+  })
+
+  test('a link to a regular file counts as existing', async ({ assert }) => {
+    const state = await run(async (migrations, root) => {
+      await writeFile(join(root, 'real.ts'), '')
+      await symlink(join(root, 'real.ts'), join(migrations, NAME))
+    })
+    try {
+      await state.run()
+      assert.lengthOf(state.logged, 1)
+      assert.isFalse(state.codemodsCreated)
+    } finally {
+      await rm(state.root, { recursive: true, force: true })
+    }
+  })
+
+  test('a directory with the migration name stops configure', async ({ assert }) => {
+    const state = await run((migrations) => mkdir(join(migrations, NAME)))
+    try {
+      await assert.rejects(() => state.run(), new RegExp(`${NAME}.*not a regular file`))
+      assert.isFalse(state.codemodsCreated)
+      assert.lengthOf(state.logged, 0)
+    } finally {
+      await rm(state.root, { recursive: true, force: true })
+    }
+  })
+
+  test('a broken link with the migration name stops configure', async ({ assert }) => {
+    const state = await run((migrations, root) =>
+      symlink(join(root, 'missing.ts'), join(migrations, NAME))
+    )
+    try {
+      await assert.rejects(() => state.run(), new RegExp(`${NAME}.*not a regular file`))
+      assert.isFalse(state.codemodsCreated)
+    } finally {
+      await rm(state.root, { recursive: true, force: true })
+    }
+  })
+
+  test('a link to a directory stops configure', async ({ assert }) => {
+    const state = await run(async (migrations, root) => {
+      await mkdir(join(root, 'dir'))
+      await symlink(join(root, 'dir'), join(migrations, NAME))
+    })
+    try {
+      await assert.rejects(() => state.run(), /not a regular file/)
+      assert.isFalse(state.codemodsCreated)
+    } finally {
+      await rm(state.root, { recursive: true, force: true })
+    }
+  })
 })

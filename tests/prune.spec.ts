@@ -7,7 +7,9 @@ const N = 30
 async function seed(client: Parameters<typeof addProof>[0]) {
   for (let i = 1; i <= N; i++) await addProof(client, `p${i}`)
 }
-const runAll = (client: any, operation: any) =>
+type Client = Awaited<ReturnType<typeof createDatabase>>['client']
+type Operation = ReturnType<typeof noteOperation>['operation']
+const runAll = (client: Client, operation: Operation) =>
   Promise.all(
     Array.from({ length: N }, (_, i) =>
       execute(client, operation, { ...input(i + 1), authorization: { proofToken: `p${i + 1}` } })
@@ -90,34 +92,43 @@ test.group('pruneReceipts', () => {
 
   test('prune from another connection (worker thread) racing executes', async ({ assert }) => {
     const { client, file } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation, hooks } = noteOperation()
     await seed(client)
     const stop = new Int32Array(new SharedArrayBuffer(4))
+    // [work started, work finished]: lets the worker see guarded work in flight.
+    const flight = new Int32Array(new SharedArrayBuffer(8))
+    hooks.beforeWork = () => void Atomics.add(flight, 0, 1)
+    hooks.afterWork = () => void Atomics.add(flight, 1, 1)
     const worker = new Worker(new URL('fixtures/prune_worker.ts', import.meta.url), {
-      workerData: { file, stop },
+      workerData: { file, stop, flight },
       execArgv: ['--import=@poppinss/ts-exec'],
     })
-    const messages: unknown[] = []
+    // Rejects on a startup error or a silent exit, so no waiter below can hang on a dead worker.
+    const died = new Promise<never>((_, reject) => {
+      worker.once('error', reject)
+      worker.once('exit', (code) => reject(new Error(`prune worker exited with code ${code}`)))
+    })
+    died.catch(() => {})
     let ready!: () => void
     const isReady = new Promise<void>((resolve) => (ready = resolve))
-    const report = new Promise<{ runs: number; deleted: number }>((resolve, reject) => {
-      worker.on('message', (message) => {
-        messages.push(message)
-        if (message === 'ready') ready()
-        else resolve(message)
-      })
-      worker.once('error', reject)
+    const report = new Promise<{ runs: number; deleted: number; overlapped: number }>((resolve) => {
+      worker.on('message', (message) => (message === 'ready' ? ready() : resolve(message)))
     })
-    await isReady
     let outcomes: Awaited<ReturnType<typeof runAll>>
+    let result: Awaited<typeof report>
     try {
+      await Promise.race([isReady, died])
       outcomes = await runAll(client, operation)
+      Atomics.store(stop, 0, 1)
+      result = await Promise.race([report, died])
     } finally {
       Atomics.store(stop, 0, 1)
+      await worker.terminate()
     }
-    const { runs, deleted } = await report
-    // The worker kept pruning for the whole run, so it interleaved with the executes.
+    const { runs, deleted, overlapped } = result
+    // The worker kept pruning for the whole run, and a prune overlapped guarded work in flight.
     assert.isAbove(runs, 1)
+    assert.isAbove(overlapped, 0)
     assert.isTrue(outcomes.every((outcome) => !outcome.replayed))
     assert.lengthOf(await client.from(RECEIPTS_TABLE).where('state', 'pending'), 0)
     assert.equal(await count(client, 'notes'), N)

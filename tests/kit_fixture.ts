@@ -67,8 +67,44 @@ export interface KitFixture {
  * A real AdonisJS app with Lucid, the limiter and Account Kit 0.3.3, after `node ace configure`
  * for the Kit and for this package, with all migrations run.
  */
-export async function bootKit(): Promise<KitFixture> {
-  const root = await mkdtemp(join(tmpdir(), 'adonisjs-duplicate-request-guard-kit-'))
+export async function bootKit(
+  options: { appMigration?: string; parent?: string } = {}
+): Promise<KitFixture> {
+  const cleanups: Array<() => Promise<void>> = []
+  // Runs every cleanup, newest first, and reports the first failure after all have run.
+  const cleanup = async () => {
+    let failure: unknown
+    for (const step of cleanups.splice(0).reverse()) {
+      try {
+        await step()
+      } catch (error) {
+        failure ??= error
+      }
+    }
+    if (failure) throw failure
+  }
+  try {
+    return await boot(
+      options.appMigration ?? appMigration,
+      options.parent ?? tmpdir(),
+      cleanups,
+      cleanup
+    )
+  } catch (error) {
+    // A failed setup must not leave the temporary app or a started application behind.
+    await cleanup().catch(() => {})
+    throw error
+  }
+}
+
+async function boot(
+  migration: string,
+  parent: string,
+  cleanups: Array<() => Promise<void>>,
+  cleanup: () => Promise<void>
+): Promise<KitFixture> {
+  const root = await mkdtemp(join(parent, 'adonisjs-duplicate-request-guard-kit-'))
+  cleanups.push(() => rm(root, { recursive: true, force: true }))
   await writeFile(
     join(root, 'package.json'),
     '{"type":"module","devDependencies":{"@adonisjs/assembler":"8.6.0"}}'
@@ -84,10 +120,7 @@ export async function bootKit(): Promise<KitFixture> {
     join(root, 'start/env.ts'),
     `import { Env } from '@adonisjs/core/env'\nexport default await Env.create(new URL('../', import.meta.url), {})\n`
   )
-  await writeFile(
-    join(root, 'database/migrations/0000000000000_create_app_tables.ts'),
-    appMigration
-  )
+  await writeFile(join(root, 'database/migrations/0000000000000_create_app_tables.ts'), migration)
   await symlink(fileURLToPath(new URL('node_modules', packageRoot)), join(root, 'node_modules'))
 
   const configurer = new IgnitorFactory()
@@ -140,6 +173,7 @@ export async function bootKit(): Promise<KitFixture> {
     })
     .create(pathToFileURL(`${root}/`), { importer })
   const app = ignitor.createApp('test')
+  cleanups.push(() => app.terminate())
   await app.init()
   await app.boot()
   const db = await app.container.make('lucid.db')
@@ -170,9 +204,6 @@ export async function bootKit(): Promise<KitFixture> {
         .insert({ scope_id: 's1', user_id: String(credential.userId), role: 'owner' })
       return credential
     },
-    async close() {
-      await app.terminate()
-      await rm(root, { recursive: true, force: true })
-    },
+    close: cleanup,
   }
 }
