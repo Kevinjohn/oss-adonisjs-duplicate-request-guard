@@ -19,6 +19,10 @@
 - Fixed: an aborted nested command could start further nested commands, an open grandchild was not
   aborted, and the `cause` attached to the parent could differ from the error the child rejected
   with.
+- Changed: `authorizeReplay` receives its own copy of the stored result, so a policy that edits it
+  no longer changes what the caller gets. Redact after `execute` returns.
+- Fixed: a callback that mutated the input's command identity, actor or scope during the call could
+  make completion miss the reserved receipt. They are read once when the call starts.
 
 ## 0.1.0 - 2026-11-08
 

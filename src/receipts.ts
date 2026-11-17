@@ -394,10 +394,13 @@ export async function executeIn<Payload, Authorization, Result>(
   }
   assertSupportedConnection(trx)
   const frame = claim(trx)
+  // Read the identity once, at admission: a callback that later mutates `input` cannot make the
+  // reservation, the context and the completion disagree.
+  const admitted = { ...input, command: { ...input.command } }
   // The one outcome both observers see: this call's caller and an unwinding parent, which attaches
   // it as its error's cause.
   frame.run = commandFrame
-    .run(frame, () => runClaimed(trx, frame, operation, input))
+    .run(frame, () => runClaimed(trx, frame, operation, admitted))
     .catch((error: unknown) => {
       // An enclosing command rolled back over this one: report that, not the knock-on failure.
       if (frame.aborted && !(error instanceof UnawaitedNestedCommandException)) {
@@ -546,12 +549,12 @@ async function reserveAndRun<Payload, Authorization, Result>(
       throw new DuplicateRequestConflictException()
     }
     if (row.state !== 'completed') throw new DuplicateRequestInProgressException()
-    const result = JSON.parse(row.result) as Result
     assertLive(frame)
-    await operation.authorizeReplay?.(context, result)
+    // The policy gets its own copy: whatever it does to it, the caller receives the stored result.
+    await operation.authorizeReplay?.(context, JSON.parse(row.result) as Result)
     frame.closing = true
     internalHooks.onClosing?.()
-    return { replayed: true, result }
+    return { replayed: true, result: JSON.parse(row.result) as Result }
   }
 
   assertLive(frame)

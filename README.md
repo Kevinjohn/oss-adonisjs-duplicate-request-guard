@@ -141,7 +141,9 @@ const addPlainNote: Operation<{ body: string }, undefined, { noteId: number }> =
   class instances, functions, cycles) is refused
   before anything commits: `E_INVALID_COMMAND_VALUE` (400) for payloads, checked before
   `authorizeAccess`, `E_INVALID_COMMAND_RESULT` (500) for results. A replay returns JSON-equal data
-  (-0 comes back as 0).
+  (-0 comes back as 0), whatever `authorizeReplay` did to the copy it was given: redact or decorate
+  the result after `execute` returns. Actor, scope and command identity are read once when the call
+  starts; keep the payload itself unchanged until the call settles.
 - **Identity scope.** Command ids and request keys are scoped to one actor's operation. Another
   actor using the same ids runs its own command and learns nothing about yours. Command ids and
   request keys must be well-formed Unicode strings (no lone surrogates); others are refused with
