@@ -139,4 +139,82 @@ test.group('identity, ordering and retention rules', () => {
       1
     )
   })
+
+  test('prune with a cutoff beyond year 9999 deletes every completed receipt', async ({
+    assert,
+  }) => {
+    const { client } = await createDatabase()
+    const { operation } = noteOperation()
+    const farthest = new Date(8.64e15)
+    const bce = new Date(Date.UTC(-1, 0, 1))
+    assert.match(farthest.toISOString(), /^\+275760-/)
+    assert.match(bce.toISOString(), /^-000001-/)
+    for (const [n, cutoff] of [
+      [1, new Date(Date.UTC(10000, 0, 1))],
+      [2, farthest],
+    ] as const) {
+      await addProof(client, `p${n}`)
+      await execute(client, operation, { ...input(n), authorization: { proofToken: `p${n}` } })
+      assert.equal(await pruneReceipts(client, { olderThan: bce }), 0)
+      await assert.rejects(() => pruneReceipts(client, { olderThan: new Date('nope') }), RangeError)
+      assert.lengthOf(await receipts(client), 1)
+      assert.equal(await pruneReceipts(client, { olderThan: cutoff }), 1)
+      assert.lengthOf(await receipts(client), 0)
+    }
+  })
+})
+
+test.group('identity strings', () => {
+  // A lone surrogate: SQLite stores TEXT as UTF-8, so it would come back as U+FFFD.
+  const lone = 'c\uD800'
+  const refused = [
+    ['an ill-formed', lone],
+    ['a numeric', 123],
+    ['a missing', undefined],
+  ] as const
+  for (const field of ['commandId', 'requestKey'] as const) {
+    for (const [label, value] of refused) {
+      test(`${label} ${field} is refused before authorizeAccess, nothing written`, async ({
+        assert,
+      }) => {
+        const { client } = await createDatabase()
+        const { operation, calls } = noteOperation()
+        await addProof(client, 'p1')
+        const request = {
+          ...input(1),
+          command: { ...input(1).command, [field]: value },
+          authorization: { proofToken: 'p1' },
+        } as ReturnType<typeof input> & { authorization: unknown }
+        const error = await execute(client, operation, request).catch((e) => e)
+        assert.instanceOf(error, errors.InvalidCommandValueException)
+        assert.equal(error.status, 400)
+        assert.match(error.message, /well-formed/)
+        assert.equal(calls.access, 0)
+        assert.lengthOf(await receipts(client), 0)
+      })
+    }
+  }
+
+  test('lone surrogates in the actor, scope and payload replay rather than conflict', async ({
+    assert,
+  }) => {
+    const { client } = await createDatabase()
+    let works = 0
+    const operation = {
+      name: 'ids.\uDC00',
+      authorizeAccess() {},
+      work: () => ({ n: ++works, echo: 'r\uDBFF' }),
+    }
+    const request = {
+      actorId: 'a\uD800',
+      scopeId: 's\uDFFF',
+      payload: { body: 'p\uD801', ['k\uDC01']: 1 },
+      command: { commandId: 'c1', requestKey: 'k1' },
+    }
+    const fresh = await execute(client, operation, request)
+    const replay = await execute(client, operation, request)
+    assert.isFalse(fresh.replayed)
+    assert.deepEqual(replay, { replayed: true, result: fresh.result })
+    assert.equal(works, 1)
+  })
 })

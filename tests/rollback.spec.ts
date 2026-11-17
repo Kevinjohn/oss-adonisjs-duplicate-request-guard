@@ -1,5 +1,6 @@
 import { test } from '@japa/runner'
 import { execute, executeIn } from '../index.js'
+import { internalHooks } from '../src/receipts.js'
 import {
   addProof,
   auth,
@@ -10,7 +11,7 @@ import {
   named,
   noteOperation,
   receipts,
-  sleep,
+  signal,
   within,
 } from './helpers.js'
 
@@ -102,33 +103,62 @@ test.group('cleanup never masks the original error', () => {
   })
 })
 
-test.group('an aborted child never commits without its receipt', () => {
-  /** Parent work: Promise.all of a slow child command and a validation that rejects first. */
+test.group('an aborted child never commits without its receipt', (group) => {
+  group.each.teardown(() => {
+    internalHooks.onUnwind = undefined
+  })
+
+  /** Releases the barrier once the parent's unwind has marked its open children aborted. */
+  function releaseOnUnwind(release: () => void) {
+    internalHooks.onUnwind = () => {
+      internalHooks.onUnwind = undefined
+      release()
+    }
+  }
+
+  /**
+   * Parent work: Promise.all of a child command held in its `work` and a validation that rejects
+   * once the child is there. The child resumes, and writes, only after the parent has aborted it.
+   */
   function probe() {
     const parent = named('notes.parent')
     const child = named('notes.child')
     const next = named('notes.next')
-    child.hooks.beforeWork = () => sleep(50)
-    // The host's next command is still open when the child would write.
-    next.hooks.afterWork = () => sleep(100)
+    const childInWork = signal()
+    const release = signal()
+    const state = { childSettled: false, childSettledWhenNextRan: false }
+    let childRun: Promise<unknown> = Promise.resolve()
+    child.hooks.beforeWork = async () => {
+      childInWork.fire()
+      await release.fired
+    }
+    next.hooks.afterWork = () => {
+      state.childSettledWhenNextRan = state.childSettled
+    }
     parent.hooks.afterWork = async ({ trx }) => {
+      releaseOnUnwind(release.fire)
+      childRun = executeIn(trx, child.operation, auth(2))
+      const settle = () => {
+        state.childSettled = true
+      }
+      childRun.then(settle, settle)
       await Promise.all([
-        executeIn(trx, child.operation, auth(2)),
-        sleep(5).then(() => {
+        childRun,
+        childInWork.fired.then(() => {
           throw new Error('validation failed')
         }),
       ])
     }
-    return { parent, child, next }
+    return { parent, child, next, state, childSettled: () => Promise.allSettled([childRun]) }
   }
 
   for (const waits of [true, false]) {
-    test(`the host ${waits ? 'waits, then runs' : 'immediately runs'} its next command`, async ({
+    test(`the host ${waits ? 'waits for the child, then runs' : 'immediately runs'} its next command`, async ({
       assert,
     }) => {
       const { client } = await createDatabase()
       for (const n of [1, 2, 3]) await addProof(client, `p${n}`)
-      const { parent, child, next } = probe()
+      const { parent, child, next, state, childSettled } = probe()
       let parentError = ''
       let parentCause: unknown
       await within(
@@ -140,12 +170,15 @@ test.group('an aborted child never commits without its receipt', () => {
               return error.message
             }
           )
-          if (waits) await sleep(150)
+          if (waits) await childSettled()
           await executeIn(trx, next.operation, auth(3))
         })
       )
       assert.equal(parentError, 'validation failed')
       assert.equal((parentCause as { code?: string }).code, 'E_UNAWAITED_NESTED_COMMAND')
+      // The parent waited for the child: it had settled before the next command ran.
+      assert.isTrue(state.childSettledWhenNextRan)
+      assert.equal(child.calls.work, 1)
       // Only the next command's note and receipt committed: no orphan note from the child.
       assert.deepEqual(await committed(client), [['c3', 'completed']])
       assert.equal(await count(client, 'notes'), 1)
@@ -161,19 +194,30 @@ test.group('an aborted child never commits without its receipt', () => {
     for (const n of [1, 2]) await addProof(client, `p${n}`)
     const parent = named('notes.parent')
     const child = named('notes.child')
-    child.hooks.afterAccess = () => sleep(50)
+    const inAccess = signal()
+    const release = signal()
+    // The child is inside authorizeAccess when the parent fails, and resumes once it is aborted.
+    child.hooks.afterAccess = async () => {
+      inAccess.fire()
+      await release.fired
+    }
     let childCode = ''
     parent.hooks.afterWork = async ({ trx }) => {
+      releaseOnUnwind(release.fire)
       const nested = executeIn(trx, child.operation, auth(2)).catch((error: { code?: string }) => {
         childCode = error.code ?? 'other'
       })
-      await Promise.all([nested, sleep(5).then(() => Promise.reject(new Error('invalid')))])
+      await Promise.all([nested, inAccess.fired.then(() => Promise.reject(new Error('invalid')))])
     }
     await within(
       client.transaction((trx) => executeIn(trx, parent.operation, auth(1)).catch(() => null))
     )
     assert.equal(childCode, 'E_UNAWAITED_NESTED_COMMAND')
-    assert.deepEqual([child.calls.execute, child.calls.work, child.calls.replay], [0, 0, 0])
+    assert.equal(child.calls.access, 1)
+    assert.deepEqual(
+      [child.calls.parse, child.calls.execute, child.calls.work, child.calls.replay],
+      [0, 0, 0, 0]
+    )
     assert.deepEqual(await committed(client), [])
   })
 })

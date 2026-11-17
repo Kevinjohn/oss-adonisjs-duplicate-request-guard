@@ -31,12 +31,12 @@ export class DuplicateRequestInProgressException extends Exception {
 const PLAIN_JSON =
   'plain JSON data (plain objects, arrays, strings, finite numbers, booleans, null)'
 
-/** The client's payload is not plain JSON data. */
+/** The client's payload is not plain JSON data, or its command identity is not well-formed text. */
 export class InvalidCommandValueException extends Exception {
   static code = 'E_INVALID_COMMAND_VALUE'
   static status = 400
-  constructor() {
-    super(`Command payload must be ${PLAIN_JSON}`, {
+  constructor(message = `Command payload must be ${PLAIN_JSON}`) {
+    super(message, {
       code: InvalidCommandValueException.code,
       status: InvalidCommandValueException.status,
     })

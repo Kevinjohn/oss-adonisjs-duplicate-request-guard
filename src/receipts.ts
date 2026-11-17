@@ -28,7 +28,8 @@ const SUPPORTED_DIALECT = 'better-sqlite3'
 /**
  * Canonical JSON text for plain JSON data, with object keys sorted. Anything that JSON cannot carry
  * faithfully (undefined, functions, symbols, BigInt, non-finite numbers, Dates, Maps, typed arrays,
- * class instances, sparse arrays, symbol keys, cycles) calls `refuse`, so two different values can
+ * class instances, sparse arrays, symbol keys, getters and setters, non-enumerable keys, cycles)
+ * calls `refuse`, so two different values can
  * never share a text and every stored text parses back to an equal value.
  */
 function canonical(value: unknown, refuse: () => never, ancestors = new Set<object>()): string {
@@ -49,22 +50,25 @@ function canonical(value: unknown, refuse: () => never, ancestors = new Set<obje
   try {
     const prototype = Object.getPrototypeOf(value)
     if (Object.getOwnPropertySymbols(value).length > 0) return refuse()
+    // Every own key, hidden ones included; read through descriptors, so no getter or method of the
+    // value runs and the stored text is what a later read of the value gives.
+    const names = Object.getOwnPropertyNames(value)
+    const item = (key: string | number) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor?.enumerable || !('value' in descriptor)) return refuse()
+      return canonical(descriptor.value, refuse, ancestors)
+    }
     if (Array.isArray(value)) {
-      const keys = Object.keys(value)
-      if (
-        prototype !== Array.prototype ||
-        keys.length !== value.length ||
-        keys.some((key, index) => key !== String(index))
-      ) {
-        return refuse()
-      }
-      return `[${value.map((item) => canonical(item, refuse, ancestors)).join(',')}]`
+      // The indices 0..length-1, each an own data property, plus the intrinsic `length`.
+      if (prototype !== Array.prototype || names.length !== value.length + 1) return refuse()
+      const items: string[] = []
+      for (let index = 0; index < value.length; index++) items.push(item(index))
+      return `[${items.join(',')}]`
     }
     if (prototype !== Object.prototype && prototype !== null) return refuse()
-    const record = value as Record<string, unknown>
-    return `{${Object.keys(record)
+    return `{${names
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonical(record[key], refuse, ancestors)}`)
+      .map((key) => `${JSON.stringify(key)}:${item(key)}`)
       .join(',')}}`
   } finally {
     ancestors.delete(value)
@@ -78,14 +82,41 @@ const refuseResult = (): never => {
   throw new InvalidCommandResultException()
 }
 
+/**
+ * The identity is bound to SQLite TEXT, stored as UTF-8: a lone surrogate would come back as U+FFFD,
+ * so the retry could never match the stored row. The actor, operation name and scope reach the
+ * stored identity only through JSON.stringify, which escapes lone surrogates.
+ */
+function assertIdentity(...identity: unknown[]) {
+  // An untyped host can forward a number or nothing at all: refuse it rather than throw a TypeError.
+  if (!identity.every((value) => typeof value === 'string' && value.isWellFormed())) {
+    throw new InvalidCommandValueException(
+      'Command id and request key must be well-formed Unicode strings'
+    )
+  }
+}
+
 /** A Lucid connection: `client` is its knex instance, unset once the connection is closed. */
 interface LucidConnection {
   name: string
   client?: unknown
+  once(event: 'disconnect', listener: () => void): unknown
 }
 
-/** Real path of a SQLite file → the open Lucid connections that ran commands against it. */
-const fileWriters = new Map<string, Set<LucidConnection>>()
+/**
+ * Real path of a SQLite file → the open Lucid connections that ran commands against it. Exported
+ * for tests only; not re-exported from the package entry.
+ */
+export const fileWriters = new Map<string, Set<LucidConnection>>()
+
+/** Forgets a closed connection, and its file once no open connection uses it. */
+function releaseWriter(file: string, connection: LucidConnection) {
+  // Lucid unsets `client` and emits 'disconnect' in one synchronous step, so the lazy sweep has not
+  // removed this connection yet: its set, and so the key, are still here.
+  const writers = fileWriters.get(file) as Set<LucidConnection>
+  writers.delete(connection)
+  if (writers.size === 0) fileWriters.delete(file)
+}
 
 /** The file's real path. A file not created yet resolves through its directory's real path. */
 function realFile(filename: string) {
@@ -118,14 +149,16 @@ export function assertSupportedConnection(client: QueryClientContract | Transact
     )
   }
   watchConnection(client)
-  const filename = config.connection?.filename
-  // Every :memory: connection is its own database.
-  if (!filename || filename === ':memory:') return
+  // As better-sqlite3 reads it (lib/database.js): trimmed, and empty or :memory: is anonymous.
+  const filename = (config.connection?.filename ?? '').trim()
+  // Every anonymous connection is its own database.
+  if (filename === '' || filename === ':memory:') return
   const file = realFile(filename)
   // Query and transaction clients share the dialect, which holds the query client and its connection.
   const connection = (client.dialect as unknown as { client: { connection: LucidConnection } })
     .client.connection
   const writers = fileWriters.get(file) ?? new Set<LucidConnection>()
+  // Fallback for a close that never emitted 'disconnect' (for example a listener removed by the host).
   for (const writer of writers) {
     if (writer.client === undefined) writers.delete(writer)
   }
@@ -135,7 +168,11 @@ export function assertSupportedConnection(client: QueryClientContract | Transact
       `SQLite connections "${other.name}" and "${connection.name}" share ${file}; run guarded commands through one connection`
     )
   }
-  writers.add(connection)
+  if (!writers.has(connection)) {
+    writers.add(connection)
+    // Lucid emits it once the connection's pool is destroyed (manager.close, closeAll, patch).
+    connection.once('disconnect', () => releaseWriter(file, connection))
+  }
   fileWriters.set(file, writers)
 }
 
@@ -288,8 +325,9 @@ function claim(trx: TransactionClientContract): Frame {
   if (innermost !== (caller?.trx === trx ? caller : undefined)) {
     throw new ConcurrentCommandException()
   }
-  // A child that arrives after its parent stopped waiting for children would outlive it.
-  if (innermost?.closing) throw new UnawaitedNestedCommandException()
+  // A child that arrives after its parent stopped waiting for children would outlive it; one from an
+  // aborted command would run work that is about to be rolled back.
+  if (innermost?.closing || innermost?.aborted) throw new UnawaitedNestedCommandException()
   const frame: Frame = { trx, aborted: false, closing: false, children: [] }
   innermost?.children.push(frame)
   stack.push(frame)
@@ -305,15 +343,27 @@ function unclaim(frame: Frame) {
   if (index !== -1) stack.splice(index, 1)
 }
 
+/** The nested commands started under this one that are still open. */
+function openChildren(frame: Frame) {
+  return frame.children.filter((child) => openCommands.get(frame.trx)?.includes(child))
+}
+
+/** Marks the command and every open command nested under it aborted. */
+function abort(frame: Frame) {
+  frame.aborted = true
+  for (const child of openChildren(frame)) abort(child)
+}
+
 /**
- * Before a command rolls back: marks every nested command still open as aborted, so each stops at
- * its next checkpoint, then waits for all of them to settle. Until then this command's savepoint
- * stays open, so anything a nested command wrote, before or after the abort, is inside it and the
- * rollback removes it. Returns the aborted commands' errors.
+ * Before a command rolls back: marks every nested command still open, at any depth, as aborted, so
+ * each stops at its next checkpoint, then waits for its direct children to settle (each waits for
+ * its own). Until then this command's savepoint stays open, so anything a nested command wrote,
+ * before or after the abort, is inside it and the rollback removes it. Returns the aborted direct
+ * children's errors.
  */
 async function abortChildren(frame: Frame) {
-  const open = frame.children.filter((child) => openCommands.get(frame.trx)?.includes(child))
-  for (const child of open) child.aborted = true
+  const open = openChildren(frame)
+  for (const child of open) abort(child)
   internalHooks.onUnwind?.()
   const settled = await Promise.allSettled(frame.children.map((child) => child.run))
   return settled.flatMap((result, index) =>
@@ -360,15 +410,22 @@ export async function executeIn<Payload, Authorization, Result>(
   }
   assertSupportedConnection(trx)
   const frame = claim(trx)
-  frame.run = commandFrame.run(frame, () => runClaimed(trx, frame, operation, input))
+  // Read the identity once, at admission: a callback that later mutates `input` cannot make the
+  // reservation, the context and the completion disagree.
+  const admitted = { ...input, command: { ...input.command } }
+  // The one outcome both observers see: this call's caller and an unwinding parent, which attaches
+  // it as its error's cause.
+  frame.run = commandFrame
+    .run(frame, () => runClaimed(trx, frame, operation, admitted))
+    .catch((error: unknown) => {
+      // An enclosing command rolled back over this one: report that, not the knock-on failure.
+      if (frame.aborted && !(error instanceof UnawaitedNestedCommandException)) {
+        throw new UnawaitedNestedCommandException({ cause: error })
+      }
+      throw error
+    })
   try {
     return (await frame.run) as Outcome<Result>
-  } catch (error) {
-    // An enclosing command rolled back over this one: report that, not the knock-on failure.
-    if (frame.aborted && !(error instanceof UnawaitedNestedCommandException)) {
-      throw new UnawaitedNestedCommandException({ cause: error })
-    }
-    throw error
   } finally {
     unclaim(frame)
   }
@@ -389,6 +446,7 @@ async function runClaimed<Payload, Authorization, Result>(
   const payloadHash = createHash('sha256')
     .update(canonical({ scopeId: input.scopeId, payload: input.payload }, refusePayload))
     .digest('hex')
+  assertIdentity(input.command.commandId, input.command.requestKey)
   // A JSON tuple cannot be confused across the operation/actor boundary.
   const namespace = JSON.stringify([operation.name, input.actorId])
 
@@ -507,12 +565,12 @@ async function reserveAndRun<Payload, Authorization, Result>(
       throw new DuplicateRequestConflictException()
     }
     if (row.state !== 'completed') throw new DuplicateRequestInProgressException()
-    const result = JSON.parse(row.result) as Result
     assertLive(frame)
-    await operation.authorizeReplay?.(context, result)
+    // The policy gets its own copy: whatever it does to it, the caller receives the stored result.
+    await operation.authorizeReplay?.(context, JSON.parse(row.result) as Result)
     frame.closing = true
     internalHooks.onClosing?.()
-    return { replayed: true, result }
+    return { replayed: true, result: JSON.parse(row.result) as Result }
   }
 
   assertLive(frame)
@@ -556,11 +614,12 @@ export async function pruneReceipts(
   options: PruneOptions
 ): Promise<number> {
   assertSupportedConnection(client)
-  return Number(
-    await client
-      .from(RECEIPTS_TABLE)
-      .where('state', 'completed')
-      .where('updated_at', '<', options.olderThan.toISOString())
-      .delete()
-  )
+  // Throws for an invalid Date, before any query.
+  const cutoff = options.olderThan.toISOString()
+  const query = client.from(RECEIPTS_TABLE).where('state', 'completed')
+  // Stored timestamps have four-digit years. A year above 9999 is written "+YYYYYY", which sorts
+  // before them as text, yet every stored receipt is older. (A year before 0 sorts first and
+  // deletes nothing, which is also right.)
+  if (!cutoff.startsWith('+')) void query.where('updated_at', '<', cutoff)
+  return Number(await query.delete())
 }

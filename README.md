@@ -105,10 +105,12 @@ const addPlainNote: Operation<{ body: string }, undefined, { noteId: number }> =
   back. The nested command stops at its next checkpoint (before each of its statements, policies
   and `work`), and anything it wrote stays inside the parent's savepoint, so the rollback removes
   it: no note without a receipt, and a retry runs once. The parent rethrows its own error with the
-  nested `E_UNAWAITED_NESTED_COMMAND` as `cause`. Committing afterwards is safe. A nested command
-  whose `work` never settles keeps its parent waiting. Once a command starts to complete, replay or
-  unwind it accepts no new nested command: a late call from its context gets
-  `E_UNAWAITED_NESTED_COMMAND`, since it would outlive the command that should have awaited it.
+  nested `E_UNAWAITED_NESTED_COMMAND` as `cause`: the same error the nested call rejects with, whose
+  own `cause` is the nested callback's error when it threw one. Committing afterwards is safe. A
+  nested command whose `work` never settles keeps its parent waiting. The abort reaches every open
+  command nested below as well. Once a command starts to complete, replay or unwind, or is aborted,
+  it accepts no new nested command: a late call from its context gets `E_UNAWAITED_NESTED_COMMAND`,
+  since it would outlive the command that should have awaited it.
 - **Original errors.** If SQLite already rolled back the whole transaction (`INSERT OR ROLLBACK`, a
   busy abort), the original error, such as `SQLITE_BUSY`, is rethrown; the failed savepoint cleanup
   is attached as its `cause` when it has none. That transaction is over even though Lucid still
@@ -129,18 +131,25 @@ const addPlainNote: Operation<{ body: string }, undefined, { noteId: number }> =
 - **SQLite writers.** better-sqlite3 waits for locks synchronously, so a second in-process writer
   stalls the event loop. `E_UNSAFE_SQLITE_POOL` is thrown when `pool.max` is not 1 (the knex
   default), or when a second open Lucid connection (any name, any Database instance, symlinks
-  resolved) runs commands on a file another open connection already used. Closing a connection
-  releases its file; every `:memory:` connection is its own database. `executeIn` first takes the
+  resolved, surrounding whitespace trimmed as the driver does) runs commands on a file another open
+  connection already used. Hard-linked paths and `file:` URI filenames are not detected. Closing a
+  connection releases its file; every `:memory:` or blank-filename connection is its own database. `executeIn` first takes the
   writer lock with a no-op update, so a commit by another process between the access check and the
   reservation cannot fail the request with `SQLITE_BUSY_SNAPSHOT`.
 - **Plain JSON only.** Payloads and results must be plain objects (including null-prototype
   objects), arrays, strings, finite numbers, booleans or null; shared references are fine, cycles
-  are not. Anything else (Dates, Maps, BigInt, NaN, class instances, functions, cycles) is refused
+  are not. Every own key must be an enumerable data property: getters, setters and non-enumerable
+  keys are refused, and no method of the value is called. Anything else (Dates, Maps, BigInt, NaN,
+  class instances, functions, cycles) is refused
   before anything commits: `E_INVALID_COMMAND_VALUE` (400) for payloads, checked before
   `authorizeAccess`, `E_INVALID_COMMAND_RESULT` (500) for results. A replay returns JSON-equal data
-  (-0 comes back as 0).
+  (-0 comes back as 0), whatever `authorizeReplay` did to the copy it was given: redact or decorate
+  the result after `execute` returns. Actor, scope and command identity are read once when the call
+  starts; keep the payload itself unchanged until the call settles.
 - **Identity scope.** Command ids and request keys are scoped to one actor's operation. Another
-  actor using the same ids runs its own command and learns nothing about yours.
+  actor using the same ids runs its own command and learns nothing about yours. Command ids and
+  request keys must be well-formed Unicode strings (no lone surrogates); others are refused with
+  `E_INVALID_COMMAND_VALUE` (400) before `authorizeAccess`.
 - **Pruning.** `pruneReceipts(db.connection(), { olderThan })` deletes completed receipts updated
   strictly before `olderThan`. A pruned identity executes fresh again, so keep receipts as long as
   clients may retry.
