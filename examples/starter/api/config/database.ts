@@ -13,7 +13,6 @@ const dbConfig = defineConfig({
      */
     sqlite: {
       client: 'better-sqlite3',
-      pool: { min: 0, max: 1 },
 
       connection: {
         filename: app.tmpPath('db.sqlite3'),
