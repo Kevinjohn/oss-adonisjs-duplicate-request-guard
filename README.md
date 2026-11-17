@@ -105,10 +105,12 @@ const addPlainNote: Operation<{ body: string }, undefined, { noteId: number }> =
   back. The nested command stops at its next checkpoint (before each of its statements, policies
   and `work`), and anything it wrote stays inside the parent's savepoint, so the rollback removes
   it: no note without a receipt, and a retry runs once. The parent rethrows its own error with the
-  nested `E_UNAWAITED_NESTED_COMMAND` as `cause`. Committing afterwards is safe. A nested command
-  whose `work` never settles keeps its parent waiting. Once a command starts to complete, replay or
-  unwind it accepts no new nested command: a late call from its context gets
-  `E_UNAWAITED_NESTED_COMMAND`, since it would outlive the command that should have awaited it.
+  nested `E_UNAWAITED_NESTED_COMMAND` as `cause`: the same error the nested call rejects with, whose
+  own `cause` is the nested callback's error when it threw one. Committing afterwards is safe. A
+  nested command whose `work` never settles keeps its parent waiting. The abort reaches every open
+  command nested below as well. Once a command starts to complete, replay or unwind, or is aborted,
+  it accepts no new nested command: a late call from its context gets `E_UNAWAITED_NESTED_COMMAND`,
+  since it would outlive the command that should have awaited it.
 - **Original errors.** If SQLite already rolled back the whole transaction (`INSERT OR ROLLBACK`, a
   busy abort), the original error, such as `SQLITE_BUSY`, is rethrown; the failed savepoint cleanup
   is attached as its `cause` when it has none. That transaction is over even though Lucid still

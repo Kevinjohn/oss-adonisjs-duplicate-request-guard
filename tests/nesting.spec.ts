@@ -588,7 +588,7 @@ test.group('an aborted branch admits and continues nothing', (group) => {
           return [...result, ...(await Promise.allSettled([pending]))]
         })
       )
-      return host.map(codeOf)
+      return host
     }
     return { child, grandchild, ready, release, run }
   }
@@ -605,7 +605,8 @@ test.group('an aborted branch admits and continues nothing', (group) => {
         (error: { code?: string }) => error.code ?? 'other'
       )
     }
-    assert.deepEqual(await run(client), ['parent failed', 'E_UNAWAITED_NESTED_COMMAND'])
+    const host = await run(client)
+    assert.deepEqual(host.map(codeOf), ['parent failed', 'E_UNAWAITED_NESTED_COMMAND'])
     assert.equal(grandCode, 'E_UNAWAITED_NESTED_COMMAND')
     assert.equal(grandchild.calls.access, 0)
     assert.deepEqual(await committed(client), [])
@@ -626,13 +627,38 @@ test.group('an aborted branch admits and continues nothing', (group) => {
       ready.fire()
       await release.fired
     }
-    assert.deepEqual(await run(client), ['parent failed', 'E_UNAWAITED_NESTED_COMMAND'])
+    const host = await run(client)
+    assert.deepEqual(host.map(codeOf), ['parent failed', 'E_UNAWAITED_NESTED_COMMAND'])
     assert.equal(grandCode, 'E_UNAWAITED_NESTED_COMMAND')
     assert.equal(grandchild.calls.access, 1)
     assert.deepEqual(
       [grandchild.calls.parse, grandchild.calls.execute, grandchild.calls.work],
       [0, 0, 0]
     )
+    assert.deepEqual(await committed(client), [])
+    assert.equal(await count(client, 'notes'), 0)
+  })
+
+  test("the parent's cause is the child's own rejection when the child's callback throws", async ({
+    assert,
+  }) => {
+    const { client } = await createDatabase()
+    const { child, ready, release, run } = branch()
+    const interrupted = new Error('work interrupted')
+    child.hooks.beforeWork = async () => {
+      ready.fire()
+      await release.fired
+      throw interrupted
+    }
+    const [parentResult, childResult] = await run(client)
+    assert.equal(parentResult.status, 'rejected')
+    assert.equal(childResult.status, 'rejected')
+    const parentError = (parentResult as PromiseRejectedResult).reason as Error
+    const childError = (childResult as PromiseRejectedResult).reason as Error & { code?: string }
+    assert.equal(parentError.message, 'parent failed')
+    assert.equal(childError.code, 'E_UNAWAITED_NESTED_COMMAND')
+    assert.strictEqual(parentError.cause, childError)
+    assert.strictEqual(childError.cause, interrupted)
     assert.deepEqual(await committed(client), [])
     assert.equal(await count(client, 'notes'), 0)
   })
