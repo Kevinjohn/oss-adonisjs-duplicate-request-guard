@@ -127,8 +127,9 @@ const addPlainNote: Operation<{ body: string }, undefined, { noteId: number }> =
 - **SQLite writers.** better-sqlite3 waits for locks synchronously, so a second in-process writer
   stalls the event loop. `E_UNSAFE_SQLITE_POOL` is thrown when `pool.max` is not 1 (the knex
   default), or when a second open Lucid connection (any name, any Database instance, symlinks
-  resolved) runs commands on a file another open connection already used. Closing a connection
-  releases its file; every `:memory:` connection is its own database. `executeIn` first takes the
+  resolved, surrounding whitespace trimmed as the driver does) runs commands on a file another open
+  connection already used. Hard-linked paths and `file:` URI filenames are not detected. Closing a
+  connection releases its file; every `:memory:` or blank-filename connection is its own database. `executeIn` first takes the
   writer lock with a no-op update, so a commit by another process between the access check and the
   reservation cannot fail the request with `SQLITE_BUSY_SNAPSHOT`.
 - **Plain JSON only.** Payloads and results must be plain objects (including null-prototype

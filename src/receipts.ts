@@ -134,9 +134,10 @@ export function assertSupportedConnection(client: QueryClientContract | Transact
       `SQLite connection "${client.connectionName}" allows ${max} pooled connections; guarded commands require pool.max = 1`
     )
   }
-  const filename = config.connection?.filename
-  // Every :memory: connection is its own database.
-  if (!filename || filename === ':memory:') return
+  // As better-sqlite3 reads it (lib/database.js): trimmed, and empty or :memory: is anonymous.
+  const filename = (config.connection?.filename ?? '').trim()
+  // Every anonymous connection is its own database.
+  if (filename === '' || filename === ':memory:') return
   const file = realFile(filename)
   // Query and transaction clients share the dialect, which holds the query client and its connection.
   const connection = (client.dialect as unknown as { client: { connection: LucidConnection } })

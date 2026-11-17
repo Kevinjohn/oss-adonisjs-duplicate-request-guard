@@ -97,6 +97,32 @@ test.group('shared SQLite file detection', () => {
     }
   })
 
+  test('a path padded with whitespace is the same file, as the driver trims it', async ({
+    assert,
+  }) => {
+    const { client, file } = await createDatabase()
+    assertSupportedConnection(client)
+    for (const padded of [`${file} `, ` ${file}`, `\t${file}\n`]) {
+      const other = sqliteDatabase(padded)
+      try {
+        assert.throws(() => assertSupportedConnection(other.connection()), /share .*db\.sqlite3/)
+      } finally {
+        await other.manager.closeAll()
+      }
+    }
+  })
+
+  test('padded :memory: and blank filenames are anonymous, as the driver reads them', async ({
+    assert,
+  }) => {
+    const dbs = [' :memory: ', ' :memory: ', '  ', '  '].map(sqliteDatabase)
+    try {
+      for (const db of dbs) assert.doesNotThrow(() => assertSupportedConnection(db.connection()))
+    } finally {
+      for (const db of dbs) await db.manager.closeAll()
+    }
+  })
+
   test('a file not created yet is matched through a symlinked directory', async ({ assert }) => {
     const { file } = await createDatabase()
     const realDir = join(dirname(file), 'real')
