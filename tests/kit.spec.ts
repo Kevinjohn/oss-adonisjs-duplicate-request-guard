@@ -1,3 +1,5 @@
+import { readdir } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { test } from '@japa/runner'
 import BetterSqlite3 from 'better-sqlite3'
 import { executeIn, execute, RECEIPTS_TABLE } from '../index.js'
@@ -184,3 +186,28 @@ test.group('executeIn inside Account Kit 0.3.3 authentication.withCurrent', (gro
     )
   })
 })
+
+test('bootKit removes its temporary app when setup fails', async ({ assert }) => {
+  const prefix = 'adonisjs-duplicate-request-guard-kit-'
+  const kitDirs = async () => {
+    const names = await readdir(tmpdir())
+    return names.filter((name) => name.startsWith(prefix))
+  }
+  const before = new Set(await kitDirs())
+  await assert.rejects(
+    () =>
+      bootKit({
+        appMigration: `import { BaseSchema } from '@adonisjs/lucid/schema'
+export default class extends BaseSchema {
+  async up() {
+    throw new Error('setup failure')
+  }
+}
+`,
+      }),
+    /setup failure/
+  )
+  const after = await kitDirs()
+  const leaked = after.filter((name) => !before.has(name))
+  assert.deepEqual(leaked, [])
+}).timeout(30_000)
