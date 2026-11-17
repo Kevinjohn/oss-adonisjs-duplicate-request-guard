@@ -28,7 +28,8 @@ const SUPPORTED_DIALECT = 'better-sqlite3'
 /**
  * Canonical JSON text for plain JSON data, with object keys sorted. Anything that JSON cannot carry
  * faithfully (undefined, functions, symbols, BigInt, non-finite numbers, Dates, Maps, typed arrays,
- * class instances, sparse arrays, symbol keys, cycles) calls `refuse`, so two different values can
+ * class instances, sparse arrays, symbol keys, getters and setters, non-enumerable keys, cycles)
+ * calls `refuse`, so two different values can
  * never share a text and every stored text parses back to an equal value.
  */
 function canonical(value: unknown, refuse: () => never, ancestors = new Set<object>()): string {
@@ -49,22 +50,25 @@ function canonical(value: unknown, refuse: () => never, ancestors = new Set<obje
   try {
     const prototype = Object.getPrototypeOf(value)
     if (Object.getOwnPropertySymbols(value).length > 0) return refuse()
+    // Every own key, hidden ones included; read through descriptors, so no getter or method of the
+    // value runs and the stored text is what a later read of the value gives.
+    const names = Object.getOwnPropertyNames(value)
+    const item = (key: string | number) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor?.enumerable || !('value' in descriptor)) return refuse()
+      return canonical(descriptor.value, refuse, ancestors)
+    }
     if (Array.isArray(value)) {
-      const keys = Object.keys(value)
-      if (
-        prototype !== Array.prototype ||
-        keys.length !== value.length ||
-        keys.some((key, index) => key !== String(index))
-      ) {
-        return refuse()
-      }
-      return `[${value.map((item) => canonical(item, refuse, ancestors)).join(',')}]`
+      // The indices 0..length-1, each an own data property, plus the intrinsic `length`.
+      if (prototype !== Array.prototype || names.length !== value.length + 1) return refuse()
+      const items: string[] = []
+      for (let index = 0; index < value.length; index++) items.push(item(index))
+      return `[${items.join(',')}]`
     }
     if (prototype !== Object.prototype && prototype !== null) return refuse()
-    const record = value as Record<string, unknown>
-    return `{${Object.keys(record)
+    return `{${names
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonical(record[key], refuse, ancestors)}`)
+      .map((key) => `${JSON.stringify(key)}:${item(key)}`)
       .join(',')}}`
   } finally {
     ancestors.delete(value)

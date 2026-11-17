@@ -133,7 +133,9 @@ const addPlainNote: Operation<{ body: string }, undefined, { noteId: number }> =
   reservation cannot fail the request with `SQLITE_BUSY_SNAPSHOT`.
 - **Plain JSON only.** Payloads and results must be plain objects (including null-prototype
   objects), arrays, strings, finite numbers, booleans or null; shared references are fine, cycles
-  are not. Anything else (Dates, Maps, BigInt, NaN, class instances, functions, cycles) is refused
+  are not. Every own key must be an enumerable data property: getters, setters and non-enumerable
+  keys are refused, and no method of the value is called. Anything else (Dates, Maps, BigInt, NaN,
+  class instances, functions, cycles) is refused
   before anything commits: `E_INVALID_COMMAND_VALUE` (400) for payloads, checked before
   `authorizeAccess`, `E_INVALID_COMMAND_RESULT` (500) for results. A replay returns JSON-equal data
   (-0 comes back as 0).

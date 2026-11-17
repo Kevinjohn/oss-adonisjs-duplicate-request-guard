@@ -57,6 +57,76 @@ test.group('only plain JSON data is accepted', () => {
     assert.lengthOf(await receipts(client), 0)
   })
 
+  test('accessors, hidden keys and array methods in the result are refused', async ({ assert }) => {
+    const { client } = await createDatabase()
+    const { operation } = noteOperation()
+    await addProof(client, 'p1')
+    let reads = 0
+    const indexGetter = Object.defineProperty([0], 0, { get: () => ++reads, enumerable: true })
+    const hiddenMap = Object.defineProperty([1, 2], 'map', { value: () => ['x'] })
+    const bad: Array<[string, unknown]> = [
+      [
+        'getter',
+        {
+          noteId: 1,
+          get seq() {
+            return ++reads
+          },
+        },
+      ],
+      ['non-enumerable key', Object.defineProperty({ noteId: 1 }, 'secret', { value: 2 })],
+      ['setter', Object.defineProperty({ noteId: 1 }, 'setOnly', { set() {}, enumerable: true })],
+      ['array index getter', { noteId: 1, list: indexGetter }],
+      ['hidden array map', { noteId: 1, list: hiddenMap }],
+    ]
+    const accepted: string[] = []
+    for (const [name, value] of bad) {
+      const op = { ...operation, work: () => value as never }
+      const error = await execute(client, op, {
+        ...input(1),
+        authorization: { proofToken: 'p1' },
+      }).catch((e) => e)
+      if (!(error instanceof errors.InvalidCommandResultException)) accepted.push(name)
+    }
+    assert.deepEqual(accepted, [])
+    assert.equal(reads, 0)
+    assert.lengthOf(await receipts(client), 0)
+  })
+
+  test('a payload with a getter is refused before authorizeAccess', async ({ assert }) => {
+    const { client } = await createDatabase()
+    const { operation, calls } = noteOperation()
+    const payload = Object.defineProperty({ body: 'x' }, 'n', { get: () => 1, enumerable: true })
+    await assert.rejects(
+      () => execute(client, operation, input(1, { payload })),
+      errors.InvalidCommandValueException
+    )
+    assert.equal(calls.access, 0)
+  })
+
+  test('frozen data and an own __proto__ key are plain data', async ({ assert }) => {
+    const { client } = await createDatabase()
+    const { operation } = noteOperation()
+    await addProof(client, 'p1')
+    const payload = Object.freeze(JSON.parse('{"body":"x","__proto__":{"k":[1,2]}}'))
+    const result = Object.freeze({ noteId: 7, list: Object.freeze([1, { a: 2 }]) })
+    const op = { ...operation, work: () => result }
+    const fresh = await execute(client, op, {
+      ...input(1, { payload }),
+      authorization: { proofToken: 'p1' },
+    })
+    assert.isFalse(fresh.replayed)
+    const replay = await execute(
+      client,
+      op,
+      input(1, { payload: JSON.parse(JSON.stringify(payload)) })
+    )
+    assert.isTrue(replay.replayed)
+    assert.deepEqual(replay.result, { noteId: 7, list: [1, { a: 2 }] })
+    const conflict = await execute(client, op, input(1, { payload: { body: 'x' } })).catch((e) => e)
+    assert.instanceOf(conflict, errors.DuplicateRequestConflictException)
+  })
+
   test('an undefined result is a server error, distinct from a bad payload', async ({ assert }) => {
     const { client } = await createDatabase()
     const { operation } = noteOperation()
