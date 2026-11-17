@@ -29,3 +29,35 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+
+  starter-examples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        kit: [api, hypermedia, inertia_react, inertia_vue]
+    defaults:
+      run:
+        working-directory: examples/starter/${{ matrix.kit }}
+    env:
+      NODE_ENV: test
+      PORT: '3333'
+      HOST: 127.0.0.1
+      LOG_LEVEL: error
+      APP_KEY: 01234567890123456789012345678901
+      APP_URL: http://127.0.0.1:3333
+      SESSION_DRIVER: memory
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: 'examples/starter/${{ matrix.kit }}/pnpm-lock.yaml'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test

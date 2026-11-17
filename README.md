@@ -27,6 +27,8 @@ archive's SHA-256.
 
 ## User stories
 
+Runnable starter applications are in [examples/starter](examples/starter): [API](examples/starter/api), [Hypermedia](examples/starter/hypermedia), [Inertia React](examples/starter/inertia_react), and [Inertia Vue](examples/starter/inertia_vue). Each includes an authenticated note route, receipt migration, and a replay test.
+
 See the [user story catalogue](https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/blob/main/user-stories/README.md) for source-reviewed command behavior, transaction boundaries, replay policy and operations.
 
 ## Use
