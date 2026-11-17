@@ -7,7 +7,9 @@ const N = 30
 async function seed(client: Parameters<typeof addProof>[0]) {
   for (let i = 1; i <= N; i++) await addProof(client, `p${i}`)
 }
-const runAll = (client: any, operation: any) =>
+type Client = Awaited<ReturnType<typeof createDatabase>>['client']
+type Operation = ReturnType<typeof noteOperation>['operation']
+const runAll = (client: Client, operation: Operation) =>
   Promise.all(
     Array.from({ length: N }, (_, i) =>
       execute(client, operation, { ...input(i + 1), authorization: { proofToken: `p${i + 1}` } })
