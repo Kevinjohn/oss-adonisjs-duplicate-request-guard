@@ -139,6 +139,29 @@ test.group('identity, ordering and retention rules', () => {
       1
     )
   })
+
+  test('prune with a cutoff beyond year 9999 deletes every completed receipt', async ({
+    assert,
+  }) => {
+    const { client } = await createDatabase()
+    const { operation } = noteOperation()
+    const farthest = new Date(8.64e15)
+    const bce = new Date(Date.UTC(-1, 0, 1))
+    assert.match(farthest.toISOString(), /^\+275760-/)
+    assert.match(bce.toISOString(), /^-000001-/)
+    for (const [n, cutoff] of [
+      [1, new Date(Date.UTC(10000, 0, 1))],
+      [2, farthest],
+    ] as const) {
+      await addProof(client, `p${n}`)
+      await execute(client, operation, { ...input(n), authorization: { proofToken: `p${n}` } })
+      assert.equal(await pruneReceipts(client, { olderThan: bce }), 0)
+      await assert.rejects(() => pruneReceipts(client, { olderThan: new Date('nope') }), RangeError)
+      assert.lengthOf(await receipts(client), 1)
+      assert.equal(await pruneReceipts(client, { olderThan: cutoff }), 1)
+      assert.lengthOf(await receipts(client), 0)
+    }
+  })
 })
 
 test.group('identity strings', () => {

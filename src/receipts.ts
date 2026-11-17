@@ -536,11 +536,12 @@ export async function pruneReceipts(
   options: PruneOptions
 ): Promise<number> {
   assertSupportedConnection(client)
-  return Number(
-    await client
-      .from(RECEIPTS_TABLE)
-      .where('state', 'completed')
-      .where('updated_at', '<', options.olderThan.toISOString())
-      .delete()
-  )
+  // Throws for an invalid Date, before any query.
+  const cutoff = options.olderThan.toISOString()
+  const query = client.from(RECEIPTS_TABLE).where('state', 'completed')
+  // Stored timestamps have four-digit years. A year above 9999 is written "+YYYYYY", which sorts
+  // before them as text, yet every stored receipt is older. (A year before 0 sorts first and
+  // deletes nothing, which is also right.)
+  if (!cutoff.startsWith('+')) void query.where('updated_at', '<', cutoff)
+  return Number(await query.delete())
 }
