@@ -224,15 +224,15 @@ interface DriverConnection {
 /** The knex client behind a Lucid connection: its pool and its query events. */
 interface KnexClient {
   pool: { on(event: string, listener: (...args: any[]) => void): void }
-  on(event: 'query-error', listener: () => void): void
+  on(event: 'query-error' | 'query-response', listener: () => void): void
 }
 
 /**
  * Connections whose transaction SQLite ended underneath its Lucid client (`INSERT OR ROLLBACK`, a
  * busy abort). The client, and every child transaction made from it, still reports a transaction,
  * but statements now autocommit and a new savepoint is outermost, so its release commits. The mark
- * is on the connection because all of those clients share it, and it lasts until the owner gives
- * the connection back to the pool, which is when the lost transaction is really over.
+ * is on the connection because all of those clients share it, and it lasts until the pool
+ * hands the connection to its next owner.
  */
 const lostConnections = new WeakSet<DriverConnection>()
 
@@ -248,25 +248,28 @@ function knexClientOf(client: QueryClientContract | TransactionClientContract) {
 
 /**
  * Watches a connection from its first guarded use (or a host's `assertSupportedConnection` at boot).
- * A failed query inside a transaction that leaves the driver with no open transaction is the moment
- * SQLite ended it, whoever issued the query; without this, a child transaction opened next would
- * reopen a transaction that looks healthy. The pool taking the connection back clears the mark.
+ * A statement inside a transaction that leaves the driver with no open transaction is the moment
+ * the transaction ended, whoever issued it; without this, a child transaction opened next would
+ * reopen a transaction that looks healthy. The pool handing the connection out again clears the mark.
  */
 function watchConnection(client: QueryClientContract | TransactionClientContract) {
   const knexClient = knexClientOf(client)
   if (watchedClients.has(knexClient)) return
   const state: { current?: DriverConnection } = {}
   watchedClients.set(knexClient, state)
+  // A connection the pool hands out carries no transaction from its previous owner.
   knexClient.pool.on('acquireSuccess', (_id: unknown, connection: DriverConnection) => {
     state.current = connection
-  })
-  knexClient.pool.on('release', (connection: DriverConnection) => {
     lostConnections.delete(connection)
   })
-  // Outside a transaction this also fires, harmlessly: the release that follows clears the mark.
-  knexClient.on('query-error', () => {
+  // After any statement, failed or not (a raw COMMIT or ROLLBACK from the host succeeds). Outside
+  // a transaction, and after the owner's own final COMMIT, this also fires, harmlessly: the
+  // next acquire clears the mark.
+  const check = () => {
     if (state.current?.inTransaction === false) lostConnections.add(state.current)
-  })
+  }
+  knexClient.on('query-error', check)
+  knexClient.on('query-response', check)
 }
 
 /** A knex transaction always resolves its own bound connection. */
@@ -285,6 +288,8 @@ async function assertTransactionOpen(frame: Frame) {
   const connection = (frame.connection = await connectionOf(frame.trx))
   // The watcher may have been installed after the pool handed this connection out.
   watchedClients.get(knexClientOf(frame.trx))!.current = connection
+  // On a transaction the host already completed this marks an idle connection; the next acquire
+  // clears it.
   if (connection.inTransaction !== true) lostConnections.add(connection)
   assertLive(frame)
 }
@@ -466,14 +471,14 @@ async function runClaimed<Payload, Authorization, Result>(
  * Rolls the savepoint back. When SQLite already rolled back the whole transaction (INSERT OR
  * ROLLBACK, a busy abort), the savepoint is gone; the original error must still surface, because
  * retriers such as Account Kit test its code. The cleanup error becomes its `cause` if it has none.
- * A rollback that cannot be confirmed marks the connection lost: later commands on it are refused.
+ * The failed cleanup statement is itself what the connection's watcher sees, so later commands on
+ * the connection are refused.
  */
 async function rollBack(trx: TransactionClientContract, savepoint: string, error: unknown) {
   try {
     await trx.rawQuery(`ROLLBACK TO SAVEPOINT ${savepoint}`)
     await trx.rawQuery(`RELEASE SAVEPOINT ${savepoint}`)
   } catch (cleanup) {
-    lostConnections.add(await connectionOf(trx))
     attachCause(error, cleanup)
   }
 }

@@ -174,6 +174,37 @@ test.group('a lost transaction is lost for every client on its connection', () =
   })
 })
 
+test.group('only the transaction that was lost is refused', () => {
+  test('a command on a completed transaction is refused without spoiling the next one', async ({
+    assert,
+  }) => {
+    const client = await database()
+    const { operation } = noteOperation()
+    const done = await client.transaction()
+    await done.commit()
+    assert.equal(await executeIn(done, operation, auth(1)).catch(codeOf), 'E_TRANSACTION_LOST')
+    const outcome = await client.transaction((trx) => executeIn(trx, operation, auth(1)))
+    assert.isFalse(outcome.replayed)
+  })
+
+  test('a raw COMMIT from the host is a loss too', async ({ assert }) => {
+    const client = await database()
+    const { operation } = noteOperation()
+    assertSupportedConnection(client)
+    const trx = await client.transaction()
+    try {
+      await trx.rawQuery('COMMIT')
+      const outcome = await trx
+        .transaction((child) => executeIn(child, operation, auth(1)))
+        .catch(codeOf)
+      assert.equal(outcome, 'E_TRANSACTION_LOST')
+    } finally {
+      await trx.rollback().catch(() => null)
+    }
+    assert.lengthOf(await receipts(client), 0)
+  })
+})
+
 test.group('ordinary query failures do not lose a transaction', () => {
   test('a failed host query that leaves the transaction open is no loss', async ({ assert }) => {
     const client = await database()
