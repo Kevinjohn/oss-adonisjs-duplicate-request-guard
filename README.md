@@ -138,7 +138,9 @@ const addPlainNote: Operation<{ body: string }, undefined, { noteId: number }> =
   `authorizeAccess`, `E_INVALID_COMMAND_RESULT` (500) for results. A replay returns JSON-equal data
   (-0 comes back as 0).
 - **Identity scope.** Command ids and request keys are scoped to one actor's operation. Another
-  actor using the same ids runs its own command and learns nothing about yours.
+  actor using the same ids runs its own command and learns nothing about yours. Command ids and
+  request keys must be well-formed Unicode strings (no lone surrogates); others are refused with
+  `E_INVALID_COMMAND_VALUE` (400) before `authorizeAccess`.
 - **Pruning.** `pruneReceipts(db.connection(), { olderThan })` deletes completed receipts updated
   strictly before `olderThan`. A pruned identity executes fresh again, so keep receipts as long as
   clients may retry.

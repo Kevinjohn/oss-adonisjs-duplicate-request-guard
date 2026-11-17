@@ -140,3 +140,51 @@ test.group('identity, ordering and retention rules', () => {
     )
   })
 })
+
+test.group('identity strings', () => {
+  // A lone surrogate: SQLite stores TEXT as UTF-8, so it would come back as U+FFFD.
+  const lone = 'c\uD800'
+  for (const field of ['commandId', 'requestKey'] as const) {
+    test(`an ill-formed ${field} is refused before authorizeAccess, nothing written`, async ({
+      assert,
+    }) => {
+      const { client } = await createDatabase()
+      const { operation, calls } = noteOperation()
+      await addProof(client, 'p1')
+      const request = {
+        ...input(1),
+        command: { ...input(1).command, [field]: lone },
+        authorization: { proofToken: 'p1' },
+      }
+      const error = await execute(client, operation, request).catch((e) => e)
+      assert.instanceOf(error, errors.InvalidCommandValueException)
+      assert.equal(error.status, 400)
+      assert.match(error.message, /well-formed/)
+      assert.equal(calls.access, 0)
+      assert.lengthOf(await receipts(client), 0)
+    })
+  }
+
+  test('lone surrogates in the actor, scope and payload replay rather than conflict', async ({
+    assert,
+  }) => {
+    const { client } = await createDatabase()
+    let works = 0
+    const operation = {
+      name: 'ids.\uDC00',
+      authorizeAccess() {},
+      work: () => ({ n: ++works, echo: 'r\uDBFF' }),
+    }
+    const request = {
+      actorId: 'a\uD800',
+      scopeId: 's\uDFFF',
+      payload: { body: 'p\uD801', ['k\uDC01']: 1 },
+      command: { commandId: 'c1', requestKey: 'k1' },
+    }
+    const fresh = await execute(client, operation, request)
+    const replay = await execute(client, operation, request)
+    assert.isFalse(fresh.replayed)
+    assert.deepEqual(replay, { replayed: true, result: fresh.result })
+    assert.equal(works, 1)
+  })
+})

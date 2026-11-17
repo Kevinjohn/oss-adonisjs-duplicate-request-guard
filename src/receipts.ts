@@ -78,6 +78,19 @@ const refuseResult = (): never => {
   throw new InvalidCommandResultException()
 }
 
+/**
+ * The identity is bound to SQLite TEXT, stored as UTF-8: a lone surrogate would come back as U+FFFD,
+ * so the retry could never match the stored row. The actor, operation name and scope reach the
+ * stored identity only through JSON.stringify, which escapes lone surrogates.
+ */
+function assertIdentity(commandId: string, requestKey: string) {
+  if (!commandId.isWellFormed() || !requestKey.isWellFormed()) {
+    throw new InvalidCommandValueException(
+      'Command id and request key must be well-formed Unicode strings'
+    )
+  }
+}
+
 /** A Lucid connection: `client` is its knex instance, unset once the connection is closed. */
 interface LucidConnection {
   name: string
@@ -355,6 +368,7 @@ async function runClaimed<Payload, Authorization, Result>(
   const payloadHash = createHash('sha256')
     .update(canonical({ scopeId: input.scopeId, payload: input.payload }, refusePayload))
     .digest('hex')
+  assertIdentity(input.command.commandId, input.command.requestKey)
   // A JSON tuple cannot be confused across the operation/actor boundary.
   const namespace = JSON.stringify([operation.name, input.actorId])
 
