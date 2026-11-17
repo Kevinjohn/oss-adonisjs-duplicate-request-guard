@@ -87,8 +87,9 @@ const refuseResult = (): never => {
  * so the retry could never match the stored row. The actor, operation name and scope reach the
  * stored identity only through JSON.stringify, which escapes lone surrogates.
  */
-function assertIdentity(commandId: string, requestKey: string) {
-  if (!commandId.isWellFormed() || !requestKey.isWellFormed()) {
+function assertIdentity(...identity: unknown[]) {
+  // An untyped host can forward a number or nothing at all: refuse it rather than throw a TypeError.
+  if (!identity.every((value) => typeof value === 'string' && value.isWellFormed())) {
     throw new InvalidCommandValueException(
       'Command id and request key must be well-formed Unicode strings'
     )

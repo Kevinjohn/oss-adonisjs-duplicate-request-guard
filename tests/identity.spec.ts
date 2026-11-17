@@ -167,25 +167,32 @@ test.group('identity, ordering and retention rules', () => {
 test.group('identity strings', () => {
   // A lone surrogate: SQLite stores TEXT as UTF-8, so it would come back as U+FFFD.
   const lone = 'c\uD800'
+  const refused = [
+    ['an ill-formed', lone],
+    ['a numeric', 123],
+    ['a missing', undefined],
+  ] as const
   for (const field of ['commandId', 'requestKey'] as const) {
-    test(`an ill-formed ${field} is refused before authorizeAccess, nothing written`, async ({
-      assert,
-    }) => {
-      const { client } = await createDatabase()
-      const { operation, calls } = noteOperation()
-      await addProof(client, 'p1')
-      const request = {
-        ...input(1),
-        command: { ...input(1).command, [field]: lone },
-        authorization: { proofToken: 'p1' },
-      }
-      const error = await execute(client, operation, request).catch((e) => e)
-      assert.instanceOf(error, errors.InvalidCommandValueException)
-      assert.equal(error.status, 400)
-      assert.match(error.message, /well-formed/)
-      assert.equal(calls.access, 0)
-      assert.lengthOf(await receipts(client), 0)
-    })
+    for (const [label, value] of refused) {
+      test(`${label} ${field} is refused before authorizeAccess, nothing written`, async ({
+        assert,
+      }) => {
+        const { client } = await createDatabase()
+        const { operation, calls } = noteOperation()
+        await addProof(client, 'p1')
+        const request = {
+          ...input(1),
+          command: { ...input(1).command, [field]: value },
+          authorization: { proofToken: 'p1' },
+        } as ReturnType<typeof input> & { authorization: unknown }
+        const error = await execute(client, operation, request).catch((e) => e)
+        assert.instanceOf(error, errors.InvalidCommandValueException)
+        assert.equal(error.status, 400)
+        assert.match(error.message, /well-formed/)
+        assert.equal(calls.access, 0)
+        assert.lengthOf(await receipts(client), 0)
+      })
+    }
   }
 
   test('lone surrogates in the actor, scope and payload replay rather than conflict', async ({
