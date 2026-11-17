@@ -46,3 +46,14 @@ export async function waitForFile(filePath: string, timeoutMs = 5000): Promise<s
   }
   throw new Error(`Timed out waiting for ${filePath}`)
 }
+
+/** Poll until a file holds a complete positive pid, and return it. */
+export async function waitForPid(filePath: string, timeoutMs = 5000): Promise<number> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const text = await readFile(filePath, 'utf8').catch(() => '')
+    if (/^[1-9]\d*$/.test(text)) return Number(text)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  throw new Error(`Timed out waiting for a pid in ${filePath}`)
+}

@@ -5,7 +5,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from '@japa/runner'
-import { collectExit, isAlive, outputOf, waitForFile } from './child_process.js'
+import { collectExit, isAlive, outputOf, waitForFile, waitForPid } from './child_process.js'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
@@ -26,9 +26,33 @@ type Fixture = {
   termSent: string
   base: string
   env: NodeJS.ProcessEnv
+  /** Runners this fixture launched; teardown kills any still running. */
+  children: ChildProcess[]
 }
 
-async function fixture(options: FixtureOptions = {}): Promise<Fixture> {
+/** Kill what a test launched, then remove its directory, whatever state the test reached. */
+async function teardown(f: Fixture): Promise<void> {
+  const text = await readFile(f.ready, 'utf8').catch(() => '')
+  const pid = Number(text.trim())
+  if (pid > 0) {
+    try {
+      const group = Number(execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)]).toString())
+      if (group > 1) process.kill(-group, 'SIGKILL')
+    } catch {}
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {}
+  }
+  for (const child of f.children) {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+  }
+  await rm(f.directory, { recursive: true, force: true })
+}
+
+async function fixture(
+  cleanup: (callback: () => Promise<void>) => void,
+  options: FixtureOptions = {}
+): Promise<Fixture> {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'duplicate-request-guard-check-changed-'))
   const root = path.join(directory, 'checkout')
   const bin = path.join(directory, 'bin')
@@ -61,7 +85,7 @@ async function fixture(options: FixtureOptions = {}): Promise<Fixture> {
 
   await writeFile(
     path.join(root, 'worker.js'),
-    `import { writeFile } from 'node:fs/promises'\nprocess.on('SIGTERM', () => {})\nawait writeFile(${JSON.stringify(ready)}, String(process.pid))\nsetInterval(() => {}, 1000)\n`
+    `import { rename, writeFile } from 'node:fs/promises'\nprocess.on('SIGTERM', () => {})\nawait writeFile(${JSON.stringify(ready + '.tmp')}, String(process.pid))\nawait rename(${JSON.stringify(ready + '.tmp')}, ${JSON.stringify(ready)})\nsetInterval(() => {}, 1000)\n`
   )
   if (options.command !== 'missing') {
     const commandPath = path.join(bin, 'pnpm')
@@ -92,22 +116,25 @@ async function fixture(options: FixtureOptions = {}): Promise<Fixture> {
     env.NODE_OPTIONS =
       `${env.NODE_OPTIONS ?? ''} --require=${path.join(directory, 'process-hook.cjs')}`.trim()
   }
-  return { directory, root, bin, log, ready, termSent, base, env }
+  const f: Fixture = { directory, root, bin, log, ready, termSent, base, env, children: [] }
+  cleanup(() => teardown(f))
+  return f
 }
 
 function launch(f: Fixture): ChildProcess {
-  return spawn(
+  const child = spawn(
     process.execPath,
     ['--import=@poppinss/ts-exec', path.join(f.root, 'bin/check_changed.ts'), '--static', f.base],
     { cwd: f.root, env: f.env, stdio: ['ignore', 'pipe', 'pipe'] }
   )
+  f.children.push(child)
+  return child
 }
 
 test('runs selected static checks normally and observes a missing command spawn error', async ({
   cleanup,
 }) => {
-  const normal = await fixture()
-  cleanup(() => rm(normal.directory, { recursive: true, force: true }))
+  const normal = await fixture(cleanup)
   const normalChild = launch(normal)
   const normalOutput = await outputOf(normalChild)
   const normalResult = await collectExit(normalChild, normalOutput)
@@ -115,8 +142,7 @@ test('runs selected static checks normally and observes a missing command spawn 
   assert.match(normalResult.text, /pass format/)
   assert.match(await readFile(normal.log, 'utf8'), /exec prettier --check/)
 
-  const missing = await fixture({ command: 'missing' })
-  cleanup(() => rm(missing.directory, { recursive: true, force: true }))
+  const missing = await fixture(cleanup, { command: 'missing' })
   const missingChild = launch(missing)
   const missingOutput = await outputOf(missingChild)
   const missingResult = await collectExit(missingChild, missingOutput)
@@ -128,17 +154,15 @@ test('runs selected static checks normally and observes a missing command spawn 
 test('TERM-resistant descendants receive KILL, are reaped, and block later selected checks', async ({
   cleanup,
 }) => {
-  const f = await fixture({ command: 'hang' })
-  cleanup(() => rm(f.directory, { recursive: true, force: true }))
+  const f = await fixture(cleanup, { command: 'hang' })
   const child = launch(f)
   const output = await outputOf(child)
-  await waitForFile(f.ready)
-  const descendantPid = Number(await readFile(f.ready, 'utf8'))
+  const descendantPid = await waitForPid(f.ready)
   child.kill('SIGTERM')
   const result = await collectExit(child, output)
   assert.equal(result.code, 143, result.text)
   assert.match(result.text, /fail format \(exit killed\)/)
-  assert.doesNotMatch(await readFile(f.log, 'utf8'), /pnpm lint|pnpm typecheck/)
+  assert.doesNotMatch(await readFile(f.log, 'utf8'), /^(lint|typecheck)$/m)
   assert.equal(await isAlive(descendantPid), false)
   assert.doesNotMatch(result.text, /UnhandledPromiseRejection|unhandledRejection/)
 }).timeout(20_000)
@@ -146,40 +170,36 @@ test('TERM-resistant descendants receive KILL, are reaped, and block later selec
 test('a second signal escalates immediately while the first signal determines the exit code', async ({
   cleanup,
 }) => {
-  const f = await fixture({ command: 'hang', hook: 'record-term' })
-  cleanup(() => rm(f.directory, { recursive: true, force: true }))
+  const f = await fixture(cleanup, { command: 'hang', hook: 'record-term' })
   const child = launch(f)
   const output = await outputOf(child)
-  await waitForFile(f.ready)
-  const descendantPid = Number(await readFile(f.ready, 'utf8'))
+  const descendantPid = await waitForPid(f.ready)
   child.kill('SIGTERM')
   await waitForFile(f.termSent)
   child.kill('SIGINT')
   const result = await collectExit(child, output)
   assert.equal(result.code, 143, result.text)
   assert.equal(await isAlive(descendantPid), false)
-  assert.doesNotMatch(await readFile(f.log, 'utf8'), /pnpm lint|pnpm typecheck/)
+  assert.doesNotMatch(await readFile(f.log, 'utf8'), /^(lint|typecheck)$/m)
 }).timeout(15_000)
 
 test('reports failed final reap and retains the first signal result', async ({ cleanup }) => {
-  const f = await fixture({ command: 'hang', hook: 'fail-reap' })
-  cleanup(() => rm(f.directory, { recursive: true, force: true }))
+  const f = await fixture(cleanup, { command: 'hang', hook: 'fail-reap' })
   const child = launch(f)
   const output = await outputOf(child)
-  await waitForFile(f.ready)
+  await waitForPid(f.ready)
   child.kill('SIGTERM')
   const result = await collectExit(child, output)
   assert.equal(result.code, 143, result.text)
   assert.match(result.text, /cleanup failed:.*did not exit after SIGKILL/s)
-  assert.doesNotMatch(await readFile(f.log, 'utf8'), /pnpm lint|pnpm typecheck/)
+  assert.doesNotMatch(await readFile(f.log, 'utf8'), /^(lint|typecheck)$/m)
   assert.doesNotMatch(result.text, /UnhandledPromiseRejection|unhandledRejection/)
 }).timeout(20_000)
 
 test('interrupt settles a never-closing owned child and releases its live local handles', async ({
   cleanup,
 }) => {
-  const f = await fixture()
-  cleanup(() => rm(f.directory, { recursive: true, force: true }))
+  const f = await fixture(cleanup)
   const hook = path.join(f.directory, 'never-close.cjs')
   await writeFile(
     hook,
@@ -214,8 +234,7 @@ require('node:module').syncBuiltinESMExports()
 test('a timed-out child that never closes still settles with a timeout failure', async ({
   cleanup,
 }) => {
-  const f = await fixture()
-  cleanup(() => rm(f.directory, { recursive: true, force: true }))
+  const f = await fixture(cleanup)
   const hook = path.join(f.directory, 'timeout-never-close.cjs')
   await writeFile(
     hook,
