@@ -3,9 +3,9 @@
 ## Unreleased
 
 - Fixed: after SQLite ended a host transaction (`INSERT OR ROLLBACK`, a busy abort), a later
-  `executeIn` on the same client could commit its receipt and writes. Its connection now refuses
-  further commands, on that client and its child transactions, with the new `E_TRANSACTION_LOST`
-  until the transaction is rolled back.
+  `executeIn` on the same client could commit its receipt and writes. Commands on that client and
+  its child transactions are now refused with the new `E_TRANSACTION_LOST` until the transaction
+  is rolled back. See "Original errors" in the README for the two limits.
 - Fixed: an error whose `cause` accessor throws could skip the rollback of a command with an open
   nested command.
 

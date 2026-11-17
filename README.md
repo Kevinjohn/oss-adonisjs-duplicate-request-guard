@@ -115,10 +115,12 @@ const addPlainNote: Operation<{ body: string }, undefined, { noteId: number }> =
   reports it open: do not catch the error and carry on, roll the transaction back and start a new
   one. Until you do, `executeIn` on that client or on any child transaction of it is refused with
   `E_TRANSACTION_LOST`, and a command still open around the failed one stops at its next
-  checkpoint. This also holds when one of your own queries ended the transaction: the package
-  watches a connection for such failures from its first guarded call on it. To cover the very
-  first transaction of the process too, call `assertSupportedConnection(db.connection())` once at
-  boot. Your own later queries on that client autocommit.
+  checkpoint. The same holds when one of your own statements ended the transaction (a failed
+  `INSERT OR ROLLBACK`, a raw `COMMIT`), with two limits. The package watches a Lucid connection
+  only from its first guarded call on it, so call `assertSupportedConnection(db.connection())` at
+  boot, and again after closing and reopening a connection, to cover transactions before that.
+  And a statement issued on the transaction without awaiting the one that ended it can slip past
+  the check. Your own later queries on a lost transaction autocommit.
 - **Reruns and failures.** An owner may roll back and rerun the callback, so policies and `work`
   must be database-only and safe to rerun. Any failure rolls the savepoint back, even when the host
   catches it and commits. A failed fresh command leaves no pending receipt or partial work, so its
