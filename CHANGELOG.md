@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- Fixed: after SQLite ended a host transaction (`INSERT OR ROLLBACK`, a busy abort), a later
+  `executeIn` on the same client could commit its receipt and writes. Commands on that client and
+  its child transactions are now refused with the new `E_TRANSACTION_LOST` until the transaction
+  is rolled back. See "Original errors" in the README for the two limits.
+- Fixed: an error whose `cause` accessor throws could skip the rollback of a command with an open
+  nested command.
+- Fixed: a command id or request key that is not well-formed Unicode ran once and then conflicted
+  with its own retry. It is now refused with `E_INVALID_COMMAND_VALUE` before any policy runs.
+- Fixed: `pruneReceipts` with a cutoff beyond year 9999 deleted nothing; it now deletes every
+  completed receipt.
+- Fixed: payloads and results with getters, setters or non-enumerable keys passed validation and
+  could replay a different value. They are refused like other non-plain data.
+- Fixed: a SQLite filename with surrounding whitespace bypassed the single-writer check, and closed
+  connections stayed in its registry.
+- Fixed: an aborted nested command could start further nested commands, an open grandchild was not
+  aborted, and the `cause` attached to the parent could differ from the error the child rejected
+  with.
+- Changed: `authorizeReplay` receives its own copy of the stored result, so a policy that edits it
+  no longer changes what the caller gets. Redact after `execute` returns.
+- Fixed: a callback that mutated the input's command identity, actor or scope during the call could
+  make completion miss the reserved receipt. They are read once when the call starts.
+
 ## 0.1.0 - 2026-11-08
 
 First release.

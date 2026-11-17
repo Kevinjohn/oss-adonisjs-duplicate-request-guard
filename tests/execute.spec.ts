@@ -163,3 +163,52 @@ test.group('execute: failures roll back the reservation', () => {
     assert.deepEqual(again.result, first.result)
   })
 })
+
+test.group('what a callback mutates does not change the command', () => {
+  test('work that rewrites the input identity still completes the reserved receipt', async ({
+    assert,
+  }) => {
+    const { client } = await createDatabase()
+    const { operation, hooks } = noteOperation()
+    await addProof(client, 'p1')
+    const request = { ...input(1), authorization: { proofToken: 'p1' } }
+    hooks.afterWork = () => {
+      request.command.commandId = 'rewritten'
+      request.command.requestKey = 'rewritten'
+      request.actorId = 'bob'
+      request.scopeId = 's2'
+    }
+    const fresh = await execute(client, operation, request)
+    assert.isFalse(fresh.replayed)
+    const rows = await receipts(client)
+    assert.deepEqual(
+      rows.map((row) => [row.command_id, row.request_key, row.scope_id, row.state]),
+      [['c1', 'k1', 's1', 'completed']]
+    )
+    const retry = await execute(client, operation, input(1))
+    assert.deepEqual(retry, { replayed: true, result: fresh.result })
+  })
+
+  test('a replay policy that rewrites its result does not change what the caller gets', async ({
+    assert,
+  }) => {
+    const { client } = await createDatabase()
+    const { operation } = noteOperation()
+    await addProof(client, 'p1')
+    const fresh = await execute(client, operation, {
+      ...input(1),
+      authorization: { proofToken: 'p1' },
+    })
+    const seen: unknown[] = []
+    const redacting = {
+      ...operation,
+      authorizeReplay: (_context: unknown, result: { noteId: number }) => {
+        seen.push({ ...result })
+        result.noteId = -1
+      },
+    }
+    const retry = await execute(client, redacting, input(1))
+    assert.deepEqual(seen, [fresh.result])
+    assert.deepEqual(retry, { replayed: true, result: fresh.result })
+  })
+})

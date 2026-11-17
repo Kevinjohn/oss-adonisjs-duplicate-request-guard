@@ -12,6 +12,7 @@ import {
   ReceiptSchemaException,
   ConcurrentCommandException,
   UnawaitedNestedCommandException,
+  TransactionLostException,
   TransactionOwnerException,
   UnsafeSqlitePoolException,
   UnsupportedDialectException,
@@ -27,7 +28,8 @@ const SUPPORTED_DIALECT = 'better-sqlite3'
 /**
  * Canonical JSON text for plain JSON data, with object keys sorted. Anything that JSON cannot carry
  * faithfully (undefined, functions, symbols, BigInt, non-finite numbers, Dates, Maps, typed arrays,
- * class instances, sparse arrays, symbol keys, cycles) calls `refuse`, so two different values can
+ * class instances, sparse arrays, symbol keys, getters and setters, non-enumerable keys, cycles)
+ * calls `refuse`, so two different values can
  * never share a text and every stored text parses back to an equal value.
  */
 function canonical(value: unknown, refuse: () => never, ancestors = new Set<object>()): string {
@@ -48,22 +50,25 @@ function canonical(value: unknown, refuse: () => never, ancestors = new Set<obje
   try {
     const prototype = Object.getPrototypeOf(value)
     if (Object.getOwnPropertySymbols(value).length > 0) return refuse()
+    // Every own key, hidden ones included; read through descriptors, so no getter or method of the
+    // value runs and the stored text is what a later read of the value gives.
+    const names = Object.getOwnPropertyNames(value)
+    const item = (key: string | number) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor?.enumerable || !('value' in descriptor)) return refuse()
+      return canonical(descriptor.value, refuse, ancestors)
+    }
     if (Array.isArray(value)) {
-      const keys = Object.keys(value)
-      if (
-        prototype !== Array.prototype ||
-        keys.length !== value.length ||
-        keys.some((key, index) => key !== String(index))
-      ) {
-        return refuse()
-      }
-      return `[${value.map((item) => canonical(item, refuse, ancestors)).join(',')}]`
+      // The indices 0..length-1, each an own data property, plus the intrinsic `length`.
+      if (prototype !== Array.prototype || names.length !== value.length + 1) return refuse()
+      const items: string[] = []
+      for (let index = 0; index < value.length; index++) items.push(item(index))
+      return `[${items.join(',')}]`
     }
     if (prototype !== Object.prototype && prototype !== null) return refuse()
-    const record = value as Record<string, unknown>
-    return `{${Object.keys(record)
+    return `{${names
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonical(record[key], refuse, ancestors)}`)
+      .map((key) => `${JSON.stringify(key)}:${item(key)}`)
       .join(',')}}`
   } finally {
     ancestors.delete(value)
@@ -77,14 +82,41 @@ const refuseResult = (): never => {
   throw new InvalidCommandResultException()
 }
 
+/**
+ * The identity is bound to SQLite TEXT, stored as UTF-8: a lone surrogate would come back as U+FFFD,
+ * so the retry could never match the stored row. The actor, operation name and scope reach the
+ * stored identity only through JSON.stringify, which escapes lone surrogates.
+ */
+function assertIdentity(...identity: unknown[]) {
+  // An untyped host can forward a number or nothing at all: refuse it rather than throw a TypeError.
+  if (!identity.every((value) => typeof value === 'string' && value.isWellFormed())) {
+    throw new InvalidCommandValueException(
+      'Command id and request key must be well-formed Unicode strings'
+    )
+  }
+}
+
 /** A Lucid connection: `client` is its knex instance, unset once the connection is closed. */
 interface LucidConnection {
   name: string
   client?: unknown
+  once(event: 'disconnect', listener: () => void): unknown
 }
 
-/** Real path of a SQLite file → the open Lucid connections that ran commands against it. */
-const fileWriters = new Map<string, Set<LucidConnection>>()
+/**
+ * Real path of a SQLite file → the open Lucid connections that ran commands against it. Exported
+ * for tests only; not re-exported from the package entry.
+ */
+export const fileWriters = new Map<string, Set<LucidConnection>>()
+
+/** Forgets a closed connection, and its file once no open connection uses it. */
+function releaseWriter(file: string, connection: LucidConnection) {
+  // Lucid unsets `client` and emits 'disconnect' in one synchronous step, so the lazy sweep has not
+  // removed this connection yet: its set, and so the key, are still here.
+  const writers = fileWriters.get(file) as Set<LucidConnection>
+  writers.delete(connection)
+  if (writers.size === 0) fileWriters.delete(file)
+}
 
 /** The file's real path. A file not created yet resolves through its directory's real path. */
 function realFile(filename: string) {
@@ -116,14 +148,17 @@ export function assertSupportedConnection(client: QueryClientContract | Transact
       `SQLite connection "${client.connectionName}" allows ${max} pooled connections; guarded commands require pool.max = 1`
     )
   }
-  const filename = config.connection?.filename
-  // Every :memory: connection is its own database.
-  if (!filename || filename === ':memory:') return
+  watchConnection(client)
+  // As better-sqlite3 reads it (lib/database.js): trimmed, and empty or :memory: is anonymous.
+  const filename = (config.connection?.filename ?? '').trim()
+  // Every anonymous connection is its own database.
+  if (filename === '' || filename === ':memory:') return
   const file = realFile(filename)
   // Query and transaction clients share the dialect, which holds the query client and its connection.
   const connection = (client.dialect as unknown as { client: { connection: LucidConnection } })
     .client.connection
   const writers = fileWriters.get(file) ?? new Set<LucidConnection>()
+  // Fallback for a close that never emitted 'disconnect' (for example a listener removed by the host).
   for (const writer of writers) {
     if (writer.client === undefined) writers.delete(writer)
   }
@@ -133,7 +168,11 @@ export function assertSupportedConnection(client: QueryClientContract | Transact
       `SQLite connections "${other.name}" and "${connection.name}" share ${file}; run guarded commands through one connection`
     )
   }
-  writers.add(connection)
+  if (!writers.has(connection)) {
+    writers.add(connection)
+    // Lucid emits it once the connection's pool is destroyed (manager.close, closeAll, patch).
+    connection.once('disconnect', () => releaseWriter(file, connection))
+  }
   fileWriters.set(file, writers)
 }
 
@@ -167,6 +206,8 @@ interface Frame {
   closing: boolean
   /** Every nested command started under this one, so it can wait for them before rolling back. */
   children: Frame[]
+  /** The trx's driver connection, known from the command's first checkpoint on. */
+  connection?: DriverConnection
   /** This command's run, settled before its parent may roll back. */
   run?: Promise<unknown>
 }
@@ -175,6 +216,94 @@ interface Frame {
 const commandFrame = new AsyncLocalStorage<Frame>()
 /** Open commands per transaction, outermost first. */
 const openCommands = new WeakMap<TransactionClientContract, Frame[]>()
+
+/** The driver connection a transaction is bound to: better-sqlite3's Database. */
+interface DriverConnection {
+  inTransaction?: boolean
+}
+
+/** The knex client behind a Lucid connection: its pool and its query events. */
+interface KnexClient {
+  pool: { on(event: string, listener: (...args: any[]) => void): void }
+  on(event: 'query' | 'query-error' | 'query-response', listener: () => void): void
+}
+
+/**
+ * Connections whose transaction SQLite ended underneath its Lucid client (`INSERT OR ROLLBACK`, a
+ * busy abort). The client, and every child transaction made from it, still reports a transaction,
+ * but statements now autocommit and a new savepoint is outermost, so its release commits. The mark
+ * is on the connection because all of those clients share it, and it lasts until the pool
+ * hands the connection to its next owner.
+ */
+const lostConnections = new WeakSet<DriverConnection>()
+
+/**
+ * Watched knex clients → the connection their single-connection pool last handed out, and whether
+ * a statement has started inside a transaction since.
+ */
+type Watch = { current?: DriverConnection; open?: boolean }
+const watchedClients = new WeakMap<KnexClient, Watch>()
+
+/** Query and transaction clients share the dialect, which holds the query client and its connection. */
+function knexClientOf(client: QueryClientContract | TransactionClientContract) {
+  return (
+    client.dialect as unknown as { client: { connection: { client: { client: KnexClient } } } }
+  ).client.connection.client.client
+}
+
+/**
+ * Watches a connection from its first guarded use (or a host's `assertSupportedConnection` at boot).
+ * A statement inside a transaction that leaves the driver with no open transaction is the moment
+ * the transaction ended, whoever issued it; without this, a child transaction opened next would
+ * reopen a transaction that looks healthy. The pool handing the connection out again clears the mark.
+ */
+function watchConnection(client: QueryClientContract | TransactionClientContract) {
+  const knexClient = knexClientOf(client)
+  if (watchedClients.has(knexClient)) return
+  const state: Watch = {}
+  watchedClients.set(knexClient, state)
+  // A connection the pool hands out carries no transaction from its previous owner.
+  knexClient.pool.on('acquireSuccess', (_id: unknown, connection: DriverConnection) => {
+    state.current = connection
+    state.open = false
+    lostConnections.delete(connection)
+  })
+  // Only a statement that started inside a transaction can lose one: knex runs its own statements
+  // on the connection before BEGIN (`enforceForeignCheck` reads PRAGMA foreign_keys there).
+  knexClient.on('query', () => {
+    if (state.current?.inTransaction) state.open = true
+  })
+  // After any statement, failed or not (a raw COMMIT or ROLLBACK from the host succeeds). After
+  // the owner's own final COMMIT this also fires, harmlessly: the next acquire clears the mark.
+  const check = () => {
+    if (state.open && state.current?.inTransaction === false) lostConnections.add(state.current)
+  }
+  knexClient.on('query-error', check)
+  knexClient.on('query-response', check)
+}
+
+/** A knex transaction always resolves its own bound connection. */
+function connectionOf(trx: TransactionClientContract) {
+  return (
+    trx.knexClient as unknown as { client: { acquireConnection(): Promise<DriverConnection> } }
+  ).client.acquireConnection()
+}
+
+/**
+ * Binds the command to its connection and asks better-sqlite3 whether a transaction is still open
+ * on it: a host query may have ended it before this command started. Anything but a confirmed open
+ * transaction is treated as lost.
+ */
+async function assertTransactionOpen(frame: Frame) {
+  // A transaction the host already completed no longer owns its connection: the pool may have
+  // handed it to a waiting transaction, which a mark here would refuse.
+  if (frame.trx.isCompleted) throw new TransactionLostException()
+  const connection = (frame.connection = await connectionOf(frame.trx))
+  // The watcher may have been installed after the pool handed this connection out.
+  watchedClients.get(knexClientOf(frame.trx))!.current = connection
+  if (connection.inTransaction !== true) lostConnections.add(connection)
+  assertLive(frame)
+}
 
 /**
  * Test-only seams, not exported from the package entry: `onClosing` runs when a command starts to
@@ -196,8 +325,9 @@ function claim(trx: TransactionClientContract): Frame {
   if (innermost !== (caller?.trx === trx ? caller : undefined)) {
     throw new ConcurrentCommandException()
   }
-  // A child that arrives after its parent stopped waiting for children would outlive it.
-  if (innermost?.closing) throw new UnawaitedNestedCommandException()
+  // A child that arrives after its parent stopped waiting for children would outlive it; one from an
+  // aborted command would run work that is about to be rolled back.
+  if (innermost?.closing || innermost?.aborted) throw new UnawaitedNestedCommandException()
   const frame: Frame = { trx, aborted: false, closing: false, children: [] }
   innermost?.children.push(frame)
   stack.push(frame)
@@ -213,15 +343,27 @@ function unclaim(frame: Frame) {
   if (index !== -1) stack.splice(index, 1)
 }
 
+/** The nested commands started under this one that are still open. */
+function openChildren(frame: Frame) {
+  return frame.children.filter((child) => openCommands.get(frame.trx)?.includes(child))
+}
+
+/** Marks the command and every open command nested under it aborted. */
+function abort(frame: Frame) {
+  frame.aborted = true
+  for (const child of openChildren(frame)) abort(child)
+}
+
 /**
- * Before a command rolls back: marks every nested command still open as aborted, so each stops at
- * its next checkpoint, then waits for all of them to settle. Until then this command's savepoint
- * stays open, so anything a nested command wrote, before or after the abort, is inside it and the
- * rollback removes it. Returns the aborted commands' errors.
+ * Before a command rolls back: marks every nested command still open, at any depth, as aborted, so
+ * each stops at its next checkpoint, then waits for its direct children to settle (each waits for
+ * its own). Until then this command's savepoint stays open, so anything a nested command wrote,
+ * before or after the abort, is inside it and the rollback removes it. Returns the aborted direct
+ * children's errors.
  */
 async function abortChildren(frame: Frame) {
-  const open = frame.children.filter((child) => openCommands.get(frame.trx)?.includes(child))
-  for (const child of open) child.aborted = true
+  const open = openChildren(frame)
+  for (const child of open) abort(child)
   internalHooks.onUnwind?.()
   const settled = await Promise.allSettled(frame.children.map((child) => child.run))
   return settled.flatMap((result, index) =>
@@ -231,10 +373,14 @@ async function abortChildren(frame: Frame) {
 
 /**
  * Checked before each of the command's own statements and before each policy and `work`: an
- * aborted command stops at its next checkpoint and rolls back. User code already running can still
+ * aborted command stops at its next checkpoint and rolls back, and so does every command on a
+ * connection whose transaction SQLite already ended. User code already running can still
  * write, but its parent waits for it, so those writes stay inside the parent's open savepoint.
  */
 function assertLive(frame: Frame) {
+  if (frame.connection && lostConnections.has(frame.connection)) {
+    throw new TransactionLostException()
+  }
   if (frame.aborted) throw new UnawaitedNestedCommandException()
 }
 
@@ -264,15 +410,22 @@ export async function executeIn<Payload, Authorization, Result>(
   }
   assertSupportedConnection(trx)
   const frame = claim(trx)
-  frame.run = commandFrame.run(frame, () => runClaimed(trx, frame, operation, input))
+  // Read the identity once, at admission: a callback that later mutates `input` cannot make the
+  // reservation, the context and the completion disagree.
+  const admitted = { ...input, command: { ...input.command } }
+  // The one outcome both observers see: this call's caller and an unwinding parent, which attaches
+  // it as its error's cause.
+  frame.run = commandFrame
+    .run(frame, () => runClaimed(trx, frame, operation, admitted))
+    .catch((error: unknown) => {
+      // An enclosing command rolled back over this one: report that, not the knock-on failure.
+      if (frame.aborted && !(error instanceof UnawaitedNestedCommandException)) {
+        throw new UnawaitedNestedCommandException({ cause: error })
+      }
+      throw error
+    })
   try {
     return (await frame.run) as Outcome<Result>
-  } catch (error) {
-    // An enclosing command rolled back over this one: report that, not the knock-on failure.
-    if (frame.aborted && !(error instanceof UnawaitedNestedCommandException)) {
-      throw new UnawaitedNestedCommandException({ cause: error })
-    }
-    throw error
   } finally {
     unclaim(frame)
   }
@@ -287,11 +440,13 @@ async function runClaimed<Payload, Authorization, Result>(
   // Take SQLite's writer lock before the first read. A deferred transaction that reads and then
   // writes fails with SQLITE_BUSY_SNAPSHOT when another process committed in between.
   assertLive(frame)
+  await assertTransactionOpen(frame)
   await trx.rawQuery(`UPDATE ${RECEIPTS_TABLE} SET id = id WHERE 0`)
   // Validate before any policy runs: a payload that cannot be hashed faithfully is the client's error.
   const payloadHash = createHash('sha256')
     .update(canonical({ scopeId: input.scopeId, payload: input.payload }, refusePayload))
     .digest('hex')
+  assertIdentity(input.command.commandId, input.command.requestKey)
   // A JSON tuple cannot be confused across the operation/actor boundary.
   const namespace = JSON.stringify([operation.name, input.actorId])
 
@@ -327,6 +482,8 @@ async function runClaimed<Payload, Authorization, Result>(
  * Rolls the savepoint back. When SQLite already rolled back the whole transaction (INSERT OR
  * ROLLBACK, a busy abort), the savepoint is gone; the original error must still surface, because
  * retriers such as Account Kit test its code. The cleanup error becomes its `cause` if it has none.
+ * The failed cleanup statement is itself what the connection's watcher sees, so later commands on
+ * the connection are refused.
  */
 async function rollBack(trx: TransactionClientContract, savepoint: string, error: unknown) {
   try {
@@ -338,15 +495,15 @@ async function rollBack(trx: TransactionClientContract, savepoint: string, error
 }
 
 /**
- * Gives an error without a `cause` the given one. A frozen error or a read-only `cause` keeps the
- * host's error as it is: the rollback that follows must never be skipped over an annotation.
+ * Gives an error without a `cause` the given one. A frozen error, a read-only `cause` or a `cause`
+ * accessor that throws keeps the host's error as it is: reading and writing both stay inside the
+ * try, because the rollback that follows must never be skipped over an annotation.
  */
 function attachCause(error: unknown, cause: unknown) {
-  if (!(error instanceof Error) || error.cause !== undefined) return
   try {
-    error.cause = cause
+    if (error instanceof Error && error.cause === undefined) error.cause = cause
   } catch {
-    // Not writable: the error surfaces unannotated.
+    // Not readable or not writable: the error surfaces unannotated.
   }
 }
 
@@ -408,12 +565,12 @@ async function reserveAndRun<Payload, Authorization, Result>(
       throw new DuplicateRequestConflictException()
     }
     if (row.state !== 'completed') throw new DuplicateRequestInProgressException()
-    const result = JSON.parse(row.result) as Result
     assertLive(frame)
-    await operation.authorizeReplay?.(context, result)
+    // The policy gets its own copy: whatever it does to it, the caller receives the stored result.
+    await operation.authorizeReplay?.(context, JSON.parse(row.result) as Result)
     frame.closing = true
     internalHooks.onClosing?.()
-    return { replayed: true, result }
+    return { replayed: true, result: JSON.parse(row.result) as Result }
   }
 
   assertLive(frame)
@@ -457,11 +614,12 @@ export async function pruneReceipts(
   options: PruneOptions
 ): Promise<number> {
   assertSupportedConnection(client)
-  return Number(
-    await client
-      .from(RECEIPTS_TABLE)
-      .where('state', 'completed')
-      .where('updated_at', '<', options.olderThan.toISOString())
-      .delete()
-  )
+  // Throws for an invalid Date, before any query.
+  const cutoff = options.olderThan.toISOString()
+  const query = client.from(RECEIPTS_TABLE).where('state', 'completed')
+  // Stored timestamps have four-digit years. A year above 9999 is written "+YYYYYY", which sorts
+  // before them as text, yet every stored receipt is older. (A year before 0 sorts first and
+  // deletes nothing, which is also right.)
+  if (!cutoff.startsWith('+')) void query.where('updated_at', '<', cutoff)
+  return Number(await query.delete())
 }
