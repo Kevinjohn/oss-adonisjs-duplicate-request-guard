@@ -117,10 +117,10 @@ const addPlainNote: Operation<{ body: string }, undefined, { noteId: number }> =
   reports it open: do not catch the error and carry on, roll the transaction back and start a new
   one. Until you do, `executeIn` on that client or on any child transaction of it is refused with
   `E_TRANSACTION_LOST`, and a command still open around the failed one stops at its next
-  checkpoint. A transaction ended by one of your own queries is refused the same way once a
-  command has run on it and seen that; a child transaction you open before any command reopens a
-  transaction the package cannot tell from the original. Your own later queries on that client
-  autocommit.
+  checkpoint. This also holds when one of your own queries ended the transaction: the package
+  watches a connection for such failures from its first guarded call on it. To cover the very
+  first transaction of the process too, call `assertSupportedConnection(db.connection())` once at
+  boot. Your own later queries on that client autocommit.
 - **Reruns and failures.** An owner may roll back and rerun the callback, so policies and `work`
   must be database-only and safe to rerun. Any failure rolls the savepoint back, even when the host
   catches it and commits. A failed fresh command leaves no pending receipt or partial work, so its

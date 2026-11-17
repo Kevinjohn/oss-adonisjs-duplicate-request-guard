@@ -147,6 +147,7 @@ export function assertSupportedConnection(client: QueryClientContract | Transact
       `SQLite connection "${client.connectionName}" allows ${max} pooled connections; guarded commands require pool.max = 1`
     )
   }
+  watchConnection(client)
   // As better-sqlite3 reads it (lib/database.js): trimmed, and empty or :memory: is anonymous.
   const filename = (config.connection?.filename ?? '').trim()
   // Every anonymous connection is its own database.
@@ -220,6 +221,12 @@ interface DriverConnection {
   inTransaction?: boolean
 }
 
+/** The knex client behind a Lucid connection: its pool and its query events. */
+interface KnexClient {
+  pool: { on(event: string, listener: (...args: any[]) => void): void }
+  on(event: 'query-error', listener: () => void): void
+}
+
 /**
  * Connections whose transaction SQLite ended underneath its Lucid client (`INSERT OR ROLLBACK`, a
  * busy abort). The client, and every child transaction made from it, still reports a transaction,
@@ -229,34 +236,44 @@ interface DriverConnection {
  */
 const lostConnections = new WeakSet<DriverConnection>()
 
+/** Watched knex clients → the connection their single-connection pool last handed out. */
+const watchedClients = new WeakMap<KnexClient, { current?: DriverConnection }>()
+
+/** Query and transaction clients share the dialect, which holds the query client and its connection. */
+function knexClientOf(client: QueryClientContract | TransactionClientContract) {
+  return (
+    client.dialect as unknown as { client: { connection: { client: { client: KnexClient } } } }
+  ).client.connection.client.client
+}
+
+/**
+ * Watches a connection from its first guarded use (or a host's `assertSupportedConnection` at boot).
+ * A failed query inside a transaction that leaves the driver with no open transaction is the moment
+ * SQLite ended it, whoever issued the query; without this, a child transaction opened next would
+ * reopen a transaction that looks healthy. The pool taking the connection back clears the mark.
+ */
+function watchConnection(client: QueryClientContract | TransactionClientContract) {
+  const knexClient = knexClientOf(client)
+  if (watchedClients.has(knexClient)) return
+  const state: { current?: DriverConnection } = {}
+  watchedClients.set(knexClient, state)
+  knexClient.pool.on('acquireSuccess', (_id: unknown, connection: DriverConnection) => {
+    state.current = connection
+  })
+  knexClient.pool.on('release', (connection: DriverConnection) => {
+    lostConnections.delete(connection)
+  })
+  // Outside a transaction this also fires, harmlessly: the release that follows clears the mark.
+  knexClient.on('query-error', () => {
+    if (state.current?.inTransaction === false) lostConnections.add(state.current)
+  })
+}
+
 /** A knex transaction always resolves its own bound connection. */
 function connectionOf(trx: TransactionClientContract) {
   return (
     trx.knexClient as unknown as { client: { acquireConnection(): Promise<DriverConnection> } }
   ).client.acquireConnection()
-}
-
-/** Refuses every later command on the connection until the pool gets it back. */
-function markLost(trx: TransactionClientContract, connection: DriverConnection) {
-  if (lostConnections.has(connection)) return
-  lostConnections.add(connection)
-  // Query and transaction clients share the dialect, which holds the query client and its connection.
-  const pool = (
-    trx.dialect as unknown as {
-      client: { connection: { client: { client: { pool: PoolEvents } } } }
-    }
-  ).client.connection.client.client.pool
-  const onRelease = (released: unknown) => {
-    if (released !== connection) return
-    lostConnections.delete(connection)
-    pool.removeListener('release', onRelease)
-  }
-  pool.on('release', onRelease)
-}
-
-interface PoolEvents {
-  on(event: 'release', listener: (resource: unknown) => void): void
-  removeListener(event: 'release', listener: (resource: unknown) => void): void
 }
 
 /**
@@ -266,7 +283,9 @@ interface PoolEvents {
  */
 async function assertTransactionOpen(frame: Frame) {
   const connection = (frame.connection = await connectionOf(frame.trx))
-  if (connection.inTransaction !== true) markLost(frame.trx, connection)
+  // The watcher may have been installed after the pool handed this connection out.
+  watchedClients.get(knexClientOf(frame.trx))!.current = connection
+  if (connection.inTransaction !== true) lostConnections.add(connection)
   assertLive(frame)
 }
 
@@ -451,7 +470,7 @@ async function rollBack(trx: TransactionClientContract, savepoint: string, error
     await trx.rawQuery(`ROLLBACK TO SAVEPOINT ${savepoint}`)
     await trx.rawQuery(`RELEASE SAVEPOINT ${savepoint}`)
   } catch (cleanup) {
-    markLost(trx, await connectionOf(trx))
+    lostConnections.add(await connectionOf(trx))
     attachCause(error, cleanup)
   }
 }

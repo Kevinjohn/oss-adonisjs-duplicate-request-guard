@@ -1,6 +1,6 @@
 import { test } from '@japa/runner'
 import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
-import { executeIn } from '../index.js'
+import { assertSupportedConnection, executeIn } from '../index.js'
 import { addProof, auth, count, createDatabase, named, noteOperation, receipts } from './helpers.js'
 
 /** A statement that makes SQLite roll back the whole transaction, not just the statement. */
@@ -84,6 +84,7 @@ test.group('a lost transaction is lost for every client on its connection', () =
     }) => {
       const client = await database()
       const { operation, hooks } = noteOperation()
+      assertSupportedConnection(client)
       const trx = await client.transaction()
       try {
         if (loser === 'a command') {
@@ -91,9 +92,8 @@ test.group('a lost transaction is lost for every client on its connection', () =
           await executeIn(trx, operation, auth(1)).catch(() => null)
           hooks.afterWork = undefined
         } else {
+          // No command sees this: the watcher armed by the boot-time check does.
           await endTransaction(trx).catch(() => null)
-          // Marks the connection: afterwards the driver alone could not tell.
-          await executeIn(trx, operation, auth(1)).catch(() => null)
         }
         // The child's savepoint reopens a transaction, so the driver reports one again.
         const outcome = await trx
@@ -107,6 +107,27 @@ test.group('a lost transaction is lost for every client on its connection', () =
       assert.equal(await count(client, 'notes'), 1)
     })
   }
+
+  test('a watcher armed mid-transaction by a first command still sees a later host query', async ({
+    assert,
+  }) => {
+    const client = await database()
+    const { operation } = noteOperation()
+    const trx = await client.transaction()
+    try {
+      // The first guarded call on this connection happens with the transaction already open.
+      await executeIn(trx, operation, auth(1))
+      await endTransaction(trx).catch(() => null)
+      const outcome = await trx
+        .transaction((child) => executeIn(child, operation, auth(2)))
+        .catch(codeOf)
+      assert.equal(outcome, 'E_TRANSACTION_LOST')
+    } finally {
+      await trx.rollback().catch(() => null)
+    }
+    assert.lengthOf(await receipts(client), 0)
+    assert.equal(await count(client, 'notes'), 1)
+  })
 
   test('a parent that swallows the loss cannot run a command in a child transaction', async ({
     assert,
@@ -150,6 +171,29 @@ test.group('a lost transaction is lost for every client on its connection', () =
       assert.isFalse(outcome.replayed)
     }
     assert.lengthOf(await receipts(client), 2)
+  })
+})
+
+test.group('ordinary query failures do not lose a transaction', () => {
+  test('a failed host query that leaves the transaction open is no loss', async ({ assert }) => {
+    const client = await database()
+    const { operation } = noteOperation()
+    assertSupportedConnection(client)
+    await client.transaction(async (trx) => {
+      await trx.rawQuery('SELECT missing FROM nowhere').catch(() => null)
+      const outcome = await trx.transaction((child) => executeIn(child, operation, auth(1)))
+      assert.isFalse(outcome.replayed)
+    })
+    assert.lengthOf(await receipts(client), 1)
+  })
+
+  test('a failed query outside any transaction marks nothing', async ({ assert }) => {
+    const client = await database()
+    const { operation } = noteOperation()
+    assertSupportedConnection(client)
+    await client.rawQuery('SELECT missing FROM nowhere').catch(() => null)
+    const outcome = await client.transaction((trx) => executeIn(trx, operation, auth(1)))
+    assert.isFalse(outcome.replayed)
   })
 })
 
