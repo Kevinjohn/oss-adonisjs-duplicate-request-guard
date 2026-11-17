@@ -225,7 +225,7 @@ interface DriverConnection {
 /** The knex client behind a Lucid connection: its pool and its query events. */
 interface KnexClient {
   pool: { on(event: string, listener: (...args: any[]) => void): void }
-  on(event: 'query-error' | 'query-response', listener: () => void): void
+  on(event: 'query' | 'query-error' | 'query-response', listener: () => void): void
 }
 
 /**
@@ -237,8 +237,12 @@ interface KnexClient {
  */
 const lostConnections = new WeakSet<DriverConnection>()
 
-/** Watched knex clients → the connection their single-connection pool last handed out. */
-const watchedClients = new WeakMap<KnexClient, { current?: DriverConnection }>()
+/**
+ * Watched knex clients → the connection their single-connection pool last handed out, and whether
+ * a statement has started inside a transaction since.
+ */
+type Watch = { current?: DriverConnection; open?: boolean }
+const watchedClients = new WeakMap<KnexClient, Watch>()
 
 /** Query and transaction clients share the dialect, which holds the query client and its connection. */
 function knexClientOf(client: QueryClientContract | TransactionClientContract) {
@@ -256,18 +260,23 @@ function knexClientOf(client: QueryClientContract | TransactionClientContract) {
 function watchConnection(client: QueryClientContract | TransactionClientContract) {
   const knexClient = knexClientOf(client)
   if (watchedClients.has(knexClient)) return
-  const state: { current?: DriverConnection } = {}
+  const state: Watch = {}
   watchedClients.set(knexClient, state)
   // A connection the pool hands out carries no transaction from its previous owner.
   knexClient.pool.on('acquireSuccess', (_id: unknown, connection: DriverConnection) => {
     state.current = connection
+    state.open = false
     lostConnections.delete(connection)
   })
-  // After any statement, failed or not (a raw COMMIT or ROLLBACK from the host succeeds). Outside
-  // a transaction, and after the owner's own final COMMIT, this also fires, harmlessly: the
-  // next acquire clears the mark.
+  // Only a statement that started inside a transaction can lose one: knex runs its own statements
+  // on the connection before BEGIN (`enforceForeignCheck` reads PRAGMA foreign_keys there).
+  knexClient.on('query', () => {
+    if (state.current?.inTransaction) state.open = true
+  })
+  // After any statement, failed or not (a raw COMMIT or ROLLBACK from the host succeeds). After
+  // the owner's own final COMMIT this also fires, harmlessly: the next acquire clears the mark.
   const check = () => {
-    if (state.current?.inTransaction === false) lostConnections.add(state.current)
+    if (state.open && state.current?.inTransaction === false) lostConnections.add(state.current)
   }
   knexClient.on('query-error', check)
   knexClient.on('query-response', check)
@@ -286,11 +295,12 @@ function connectionOf(trx: TransactionClientContract) {
  * transaction is treated as lost.
  */
 async function assertTransactionOpen(frame: Frame) {
+  // A transaction the host already completed no longer owns its connection: the pool may have
+  // handed it to a waiting transaction, which a mark here would refuse.
+  if (frame.trx.isCompleted) throw new TransactionLostException()
   const connection = (frame.connection = await connectionOf(frame.trx))
   // The watcher may have been installed after the pool handed this connection out.
   watchedClients.get(knexClientOf(frame.trx))!.current = connection
-  // On a transaction the host already completed this marks an idle connection; the next acquire
-  // clears it.
   if (connection.inTransaction !== true) lostConnections.add(connection)
   assertLive(frame)
 }

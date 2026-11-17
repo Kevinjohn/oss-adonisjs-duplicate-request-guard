@@ -187,6 +187,47 @@ test.group('only the transaction that was lost is refused', () => {
     assert.isFalse(outcome.replayed)
   })
 
+  // The pool has one connection, so a waiting transaction gets it the moment `done` releases it.
+  // The late command checks that connection some microtasks later, wherever that falls.
+  for (const ticks of Array.from({ length: 30 }, (_, i) => i)) {
+    test(`a command ${ticks} ticks after its transaction completed does not spoil a waiting one`, async ({
+      assert,
+    }) => {
+      const client = await database()
+      const { operation } = noteOperation()
+      assertSupportedConnection(client)
+      const done = await client.transaction()
+      const waiting = client.transaction()
+      const committed = done.commit()
+      for (let tick = 0; tick < ticks; tick++) await Promise.resolve()
+      const late = executeIn(done, operation, auth(1)).catch(codeOf)
+      await committed
+      const next = await waiting
+      try {
+        await late
+        const outcome = await executeIn(next, operation, auth(2))
+        assert.isFalse(outcome.replayed)
+        await next.commit()
+      } finally {
+        await next.rollback().catch(() => null)
+      }
+    })
+  }
+
+  test('statements knex runs before BEGIN do not count as a loss', async ({ assert }) => {
+    const client = await database()
+    const { operation } = noteOperation()
+    assertSupportedConnection(client)
+    // knex reads and restores PRAGMA foreign_keys around the transaction, outside it.
+    const options = { enforceForeignCheck: true } as unknown as { isolationLevel?: never }
+    // Twice: the second transaction's PRAGMA follows statements the first ran inside its own.
+    for (const n of [1, 2]) {
+      const outcome = await client.transaction((trx) => executeIn(trx, operation, auth(n)), options)
+      assert.isFalse(outcome.replayed)
+    }
+    assert.lengthOf(await receipts(client), 2)
+  })
+
   test('a raw COMMIT from the host is a loss too', async ({ assert }) => {
     const client = await database()
     const { operation } = noteOperation()
