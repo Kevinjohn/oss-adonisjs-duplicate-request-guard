@@ -3,6 +3,30 @@ import { execute, executeIn, pruneReceipts, RECEIPTS_TABLE } from '../index.js'
 import { addProof, createDatabase, errors, input, noteOperation, receipts } from './helpers.js'
 
 test.group('identity, ordering and retention rules', () => {
+  test('a throwing input getter releases the host transaction claim', async ({ assert }) => {
+    const { client } = await createDatabase()
+    const { operation } = noteOperation()
+    await addProof(client, 'p1')
+    const failure = new Error('host payload unavailable')
+    await client.transaction(async (trx) => {
+      const rejected = await executeIn(trx, operation, {
+        ...input(1),
+        get payload(): { body: string } {
+          throw failure
+        },
+      }).catch((error) => error)
+      assert.strictEqual(rejected, failure)
+      assert.lengthOf(await receipts(trx), 0)
+
+      const outcome = await executeIn(trx, operation, {
+        ...input(1),
+        authorization: { proofToken: 'p1' },
+      })
+      assert.isFalse(outcome.replayed)
+      assert.lengthOf(await receipts(trx), 1)
+    })
+  })
+
   test('authorizeAccess runs before the reservation exists', async ({ assert }) => {
     const { client } = await createDatabase()
     const { operation, hooks } = noteOperation()

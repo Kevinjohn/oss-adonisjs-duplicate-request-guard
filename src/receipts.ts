@@ -410,21 +410,21 @@ export async function executeIn<Payload, Authorization, Result>(
   }
   assertSupportedConnection(trx)
   const frame = claim(trx)
-  // Read the identity once, at admission: a callback that later mutates `input` cannot make the
-  // reservation, the context and the completion disagree.
-  const admitted = { ...input, command: { ...input.command } }
-  // The one outcome both observers see: this call's caller and an unwinding parent, which attaches
-  // it as its error's cause.
-  frame.run = commandFrame
-    .run(frame, () => runClaimed(trx, frame, operation, admitted))
-    .catch((error: unknown) => {
-      // An enclosing command rolled back over this one: report that, not the knock-on failure.
-      if (frame.aborted && !(error instanceof UnawaitedNestedCommandException)) {
-        throw new UnawaitedNestedCommandException({ cause: error })
-      }
-      throw error
-    })
   try {
+    // Read the identity once, at admission: a callback that later mutates `input` cannot make the
+    // reservation, the context and the completion disagree.
+    const admitted = { ...input, command: { ...input.command } }
+    // The one outcome both observers see: this call's caller and an unwinding parent, which attaches
+    // it as its error's cause.
+    frame.run = commandFrame
+      .run(frame, () => runClaimed(trx, frame, operation, admitted))
+      .catch((error: unknown) => {
+        // An enclosing command rolled back over this one: report that, not the knock-on failure.
+        if (frame.aborted && !(error instanceof UnawaitedNestedCommandException)) {
+          throw new UnawaitedNestedCommandException({ cause: error })
+        }
+        throw error
+      })
     return (await frame.run) as Outcome<Result>
   } finally {
     unclaim(frame)
