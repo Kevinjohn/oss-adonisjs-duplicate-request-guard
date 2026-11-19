@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.1 - 2026-11-19
+
 - Fixed: after SQLite ended a host transaction (`INSERT OR ROLLBACK`, a busy abort), a later
   `executeIn` on the same client could commit its receipt and writes. Commands on that client and
   its child transactions are now refused with the new `E_TRANSACTION_LOST` until the transaction
@@ -23,6 +25,9 @@
   no longer changes what the caller gets. Redact after `execute` returns.
 - Fixed: a callback that mutated the input's command identity, actor or scope during the call could
   make completion miss the reserved receipt. They are read once when the call starts.
+
+- Verify the packed guard and transaction-loss handling against the supported consumer profiles.
+  The Account Kit integration fixture uses 0.4.1.
 
 ## 0.1.0 - 2026-11-08
 

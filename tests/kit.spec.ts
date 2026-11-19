@@ -10,7 +10,7 @@ const { executeIn, execute, RECEIPTS_TABLE, errors } = fixtureGuard
 
 const makeBusyError = () => Object.assign(new Error('simulated busy'), { code: 'SQLITE_BUSY' })
 
-test.group('executeIn inside Account Kit 0.4.0 authentication.withCurrent', (group) => {
+test.group('executeIn inside Account Kit 0.4.1 authentication.withCurrent', (group) => {
   let fixture: KitFixture
   let users = 0
   group.setup(async () => {
