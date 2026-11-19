@@ -1,8 +1,94 @@
 import { test } from '@japa/runner'
-import { execute, executeIn, pruneReceipts, RECEIPTS_TABLE } from '../index.js'
+import { execute, executeIn, pruneReceipts, RECEIPTS_TABLE, type ExecuteInput } from '../index.js'
 import { addProof, createDatabase, errors, input, noteOperation, receipts } from './helpers.js'
 
 test.group('identity, ordering and retention rules', () => {
+  test('a throwing input getter releases the host transaction claim', async ({ assert }) => {
+    const { client } = await createDatabase()
+    const { operation } = noteOperation()
+    await addProof(client, 'p1')
+    const failure = new Error('host payload unavailable')
+    await client.transaction(async (trx) => {
+      const rejected = await executeIn(trx, operation, {
+        ...input(1),
+        get payload(): { body: string } {
+          throw failure
+        },
+      }).catch((error) => error)
+      assert.strictEqual(rejected, failure)
+      assert.lengthOf(await receipts(trx), 0)
+
+      const outcome = await executeIn(trx, operation, {
+        ...input(1),
+        authorization: { proofToken: 'p1' },
+      })
+      assert.isFalse(outcome.replayed)
+      assert.lengthOf(await receipts(trx), 1)
+    })
+  })
+
+  test('getter-backed input and command work for fresh execution and replay', async ({
+    assert,
+  }) => {
+    const { client } = await createDatabase()
+    const { operation } = noteOperation()
+    await addProof(client, 'p1')
+    const command = input(1).command
+    class Command {
+      get commandId() {
+        return command.commandId
+      }
+      get requestKey() {
+        return command.requestKey
+      }
+    }
+
+    let authorizationReads = 0
+    const source = input(1)
+    class HostInput implements ExecuteInput<{ body: string }> {
+      get actorId() {
+        return source.actorId
+      }
+      get scopeId() {
+        return source.scopeId
+      }
+      get payload() {
+        return source.payload
+      }
+      get command() {
+        return new Command()
+      }
+    }
+    const adapter = Object.defineProperty(new HostInput(), 'authorization', {
+      enumerable: true,
+      get() {
+        authorizationReads++
+        return { proofToken: 'p1' }
+      },
+    })
+
+    await client.transaction(async (trx) => {
+      const fresh = await executeIn(trx, operation, adapter)
+      assert.isFalse(fresh.replayed)
+      assert.equal(authorizationReads, 1)
+      const replay = await executeIn(trx, operation, adapter)
+      assert.deepEqual(replay, { replayed: true, result: fresh.result })
+      assert.equal(authorizationReads, 1)
+
+      const withoutParser = await executeIn(
+        trx,
+        {
+          name: 'notes.without-parser',
+          authorizeAccess: operation.authorizeAccess,
+          work: () => null,
+        },
+        adapter
+      )
+      assert.deepEqual(withoutParser, { replayed: false, result: null })
+      assert.equal(authorizationReads, 1)
+    })
+  })
+
   test('authorizeAccess runs before the reservation exists', async ({ assert }) => {
     const { client } = await createDatabase()
     const { operation, hooks } = noteOperation()
