@@ -29,3 +29,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - name: Test built guard with Account Kit
+        env:
+          TEST_BUILT_GUARD: '1'
+        run: pnpm quick:test --files tests/kit.spec.ts

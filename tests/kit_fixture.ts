@@ -13,8 +13,12 @@ import { defineConfig as defineLimiterConfig, stores } from '@adonisjs/limiter'
 
 const packageRoot = new URL('../', import.meta.url)
 const self = '@kevinjohn/adonisjs-duplicate-request-guard'
+const guardEntry = process.env.TEST_BUILT_GUARD === '1' ? 'build/index.js' : 'index.ts'
+export const fixtureGuard = (await import(
+  new URL(guardEntry, packageRoot).href
+)) as typeof import('../index.js')
 const importer = (specifier: string) =>
-  specifier === self ? import(new URL('index.ts', packageRoot).href) : import(specifier)
+  specifier === self ? Promise.resolve(fixtureGuard) : import(specifier)
 
 const appMigration = `import { BaseSchema } from '@adonisjs/lucid/schema'
 export default class extends BaseSchema {
@@ -64,7 +68,7 @@ export interface KitFixture {
 }
 
 /**
- * A real AdonisJS app with Lucid, the limiter and Account Kit 0.3.3, after `node ace configure`
+ * A real AdonisJS app with Lucid, the limiter and Account Kit 0.4.0, after `node ace configure`
  * for the Kit and for this package, with all migrations run.
  */
 export async function bootKit(

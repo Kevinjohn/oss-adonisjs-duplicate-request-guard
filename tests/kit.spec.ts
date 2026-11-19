@@ -3,13 +3,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from '@japa/runner'
 import BetterSqlite3 from 'better-sqlite3'
-import { executeIn, execute, RECEIPTS_TABLE } from '../index.js'
-import { errors, makeNoteOperation } from './helpers.js'
-import { bootKit, type KitFixture } from './kit_fixture.js'
+import { makeNoteOperation } from './helpers.js'
+import { bootKit, fixtureGuard, type KitFixture } from './kit_fixture.js'
+
+const { executeIn, execute, RECEIPTS_TABLE, errors } = fixtureGuard
 
 const makeBusyError = () => Object.assign(new Error('simulated busy'), { code: 'SQLITE_BUSY' })
 
-test.group('executeIn inside Account Kit 0.3.3 authentication.withCurrent', (group) => {
+test.group('executeIn inside Account Kit 0.4.0 authentication.withCurrent', (group) => {
   let fixture: KitFixture
   let users = 0
   group.setup(async () => {
@@ -114,18 +115,48 @@ test.group('executeIn inside Account Kit 0.3.3 authentication.withCurrent', (gro
   }) => {
     const { credential, operation, calls, command, state } = await prepareGuardedNotes()
     const other = new BetterSqlite3(fixture.file)
-    other.exec('BEGIN IMMEDIATE')
+    const ownerClient = fixture.db.connection().getWriteClient()
     let runs = 0
-    const started = performance.now()
-    const pending = fixture.kit.authentication.withCurrent(credential, ({ trx }) => {
-      runs++
-      return executeIn(trx, operation, command)
-    })
-    await new Promise((resolve) => setTimeout(resolve, 150))
-    other.exec('COMMIT')
-    other.close()
-    const outcome = await pending
-    assert.isAbove(performance.now() - started, 140)
+    let observeBusy!: () => void
+    const observedBusy = new Promise<void>((resolve) => (observeBusy = resolve))
+    const onQueryError = (error: { code?: string }, query: { sql?: string }) => {
+      if (error.code === 'SQLITE_BUSY' && query.sql?.includes('update account_transaction_lock')) {
+        observeBusy()
+      }
+    }
+    let deadline: NodeJS.Timeout | undefined
+    let outcome
+    other.exec('BEGIN IMMEDIATE')
+    ownerClient.on('query-error', onQueryError)
+    try {
+      const pending = fixture.kit.authentication.withCurrent(credential, ({ trx }) => {
+        runs++
+        return executeIn(trx, operation, command)
+      })
+      const waitForBusy = new Promise<never>((_, reject) => {
+        deadline = setTimeout(
+          () => reject(new Error('Account Kit did not encounter SQLITE_BUSY')),
+          3000
+        )
+      })
+      try {
+        await Promise.race([
+          observedBusy,
+          waitForBusy,
+          pending.then(() => {
+            throw new Error('Account Kit completed while the competing lock was held')
+          }),
+        ])
+      } finally {
+        other.exec('ROLLBACK')
+        await pending.catch(() => {})
+      }
+      outcome = await pending
+    } finally {
+      clearTimeout(deadline)
+      ownerClient.off('query-error', onQueryError)
+      other.close()
+    }
     assert.isFalse(outcome.replayed)
     // The Kit takes its own lock before calling run, so blocked attempts never reach run.
     assert.equal(runs, 1)
@@ -158,22 +189,39 @@ test.group('executeIn inside Account Kit 0.3.3 authentication.withCurrent', (gro
     assert.lengthOf(after.notes, 0)
   }).timeout(10_000)
 
-  test('a non-busy failure is not retried and rolls everything back', async ({ assert }) => {
-    const { credential, operation, calls, hooks, command, state } = await prepareGuardedNotes()
-    hooks.beforeWork = () => {
-      throw new Error('work failed')
-    }
+  test('a host rollback leaves nothing, then a retry commits once and replay writes nothing', async ({
+    assert,
+  }) => {
+    const { credential, operation, calls, command, state } = await prepareGuardedNotes()
     await assert.rejects(
       () =>
-        fixture.kit.authentication.withCurrent(credential, ({ trx }) =>
-          executeIn(trx, operation, command)
-        ),
-      'work failed'
+        fixture.kit.authentication.withCurrent(credential, async ({ trx }) => {
+          await executeIn(trx, operation, command)
+          throw new Error('host rejected the completed command')
+        }),
+      'host rejected the completed command'
     )
     assert.equal(calls.work, 1)
-    const after = await state()
-    assert.lengthOf(after.receipts, 0)
-    assert.equal(after.proof.used, 0)
+    const rolledBack = await state()
+    assert.lengthOf(rolledBack.receipts, 0)
+    assert.lengthOf(rolledBack.notes, 0)
+    assert.equal(rolledBack.proof.used, 0)
+
+    const retry = await fixture.kit.authentication.withCurrent(credential, ({ trx }) =>
+      executeIn(trx, operation, command)
+    )
+    assert.isFalse(retry.replayed)
+
+    const replay = await fixture.kit.authentication.withCurrent(credential, ({ trx }) =>
+      executeIn(trx, operation, command)
+    )
+    assert.deepEqual(replay, { replayed: true, result: retry.result })
+    assert.equal(calls.work, 2)
+    const committed = await state()
+    assert.lengthOf(committed.receipts, 1)
+    assert.equal(committed.receipts[0].state, 'completed')
+    assert.lengthOf(committed.notes, 1)
+    assert.equal(committed.proof.used, 1)
   })
 
   test('execute (managed) refuses the Kit transaction', async ({ assert }) => {

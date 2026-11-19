@@ -1,0 +1,45 @@
+name: minimum peers
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  transaction-loss:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with: { node-version: 24, cache: pnpm }
+      - name: Install the advertised minimum peer versions
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync, writeFileSync } from 'node:fs'
+          const manifest = JSON.parse(readFileSync('package.json', 'utf8'))
+          for (const peer of ['@adonisjs/core', '@adonisjs/lucid']) {
+            const range = manifest.peerDependencies[peer]
+            if (!/^\^\d+\.\d+\.\d+$/.test(range)) throw new Error(`Unexpected range for ${peer}: ${range}`)
+            manifest.devDependencies[peer] = range.slice(1)
+          }
+          // Account Kit has a higher Lucid floor and is tested by the standard workflow.
+          delete manifest.devDependencies['@kevinjohn/adonisjs-account-kit']
+          writeFileSync('package.json', JSON.stringify(manifest, null, 2) + '\n')
+          JS
+          pnpm install --no-frozen-lockfile
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict'
+          import { readFileSync } from 'node:fs'
+          const { peerDependencies } = JSON.parse(readFileSync('package.json', 'utf8'))
+          for (const [peer, range] of Object.entries(peerDependencies)) {
+            const { version } = JSON.parse(readFileSync(`node_modules/${peer}/package.json`, 'utf8'))
+            assert.equal(version, range.slice(1), peer)
+            console.log(`${peer}@${version}`)
+          }
+          JS
+      - run: pnpm quick:test --files tests/lost_transaction.spec.ts
