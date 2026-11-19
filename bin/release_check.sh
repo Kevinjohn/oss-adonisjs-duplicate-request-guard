@@ -18,10 +18,15 @@ rm -rf tmp/release && mkdir -p tmp/release
 pnpm pack --pack-destination tmp/release >/dev/null
 TARBALL=$(ls tmp/release/*.tgz)
 bash bin/smoke_packed.sh "$TARBALL"
+if ! DIGEST=$(shasum -a 256 "$TARBALL" | cut -d' ' -f1) ||
+  [[ ! "$DIGEST" =~ ^[0-9a-fA-F]{64}$ ]]; then
+  echo "Could not calculate a valid SHA-256 digest for $TARBALL" >&2
+  exit 1
+fi
 REPO=${GITHUB_REPOSITORY:-$(git remote get-url origin | sed -E 's#.*github.com[:/]##; s#\.git$##')}
 awk -v h="## $VERSION - " 'index($0, h) == 1 {p=1; next} /^## / {p=0} p' CHANGELOG.md > tmp/release/notes.md
 printf '\n## Install\n\n```sh\npnpm add https://github.com/%s/releases/download/v%s/%s\n```\n\nSHA-256: `%s`\n' \
-  "$REPO" "$VERSION" "$(basename "$TARBALL")" "$(shasum -a 256 "$TARBALL" | cut -d' ' -f1)" >> tmp/release/notes.md
+  "$REPO" "$VERSION" "$(basename "$TARBALL")" "$DIGEST" >> tmp/release/notes.md
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   { echo "version=$VERSION"; echo "tarball=$(basename "$TARBALL")"; } >> "$GITHUB_OUTPUT"; fi
 echo "ready: v$VERSION $TARBALL"
