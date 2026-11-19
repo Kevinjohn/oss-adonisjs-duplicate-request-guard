@@ -4,39 +4,39 @@ import { execute, executeIn } from '../index.js'
 import { completeReceipt } from '../src/receipts.js'
 import {
   addProof,
-  count,
+  countRows,
   createDatabase,
   errors,
-  input,
-  noteOperation,
-  receipts,
+  makeCommandInput,
+  makeNoteOperation,
+  listReceipts,
 } from './helpers.js'
 
 test.group('transaction owners', () => {
   test('executeIn runs inside a host-owned transaction', async ({ assert }) => {
     const { client } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
     const outcome = await client.transaction((trx) =>
-      executeIn(trx, operation, { ...input(1), authorization: { proofToken: 'p1' } })
+      executeIn(trx, operation, { ...makeCommandInput(1), authorization: { proofToken: 'p1' } })
     )
     assert.isFalse(outcome.replayed)
   })
 
   test('executeIn refuses a non-transaction client', async ({ assert }) => {
     const { client } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await assert.rejects(
-      () => executeIn(client as never, operation, input(1)),
+      () => executeIn(client as never, operation, makeCommandInput(1)),
       errors.TransactionOwnerException
     )
   })
 
   test('execute refuses to run inside another owner', async ({ assert }) => {
     const { client } = await createDatabase()
-    const { operation, calls } = noteOperation()
+    const { operation, calls } = makeNoteOperation()
     await assert.rejects(
-      () => client.transaction((trx) => execute(trx as never, operation, input(1))),
+      () => client.transaction((trx) => execute(trx as never, operation, makeCommandInput(1))),
       errors.TransactionOwnerException
     )
     assert.equal(calls.access, 0)
@@ -46,7 +46,7 @@ test.group('transaction owners', () => {
     assert,
   }) => {
     const { client } = await createDatabase()
-    const { operation, calls, hooks } = noteOperation()
+    const { operation, calls, hooks } = makeNoteOperation()
     await addProof(client, 'p1')
     // Stand-in for Account Kit withCurrent: roll back the first attempt, then rerun the callback.
     let attempt = 0
@@ -54,13 +54,13 @@ test.group('transaction owners', () => {
       if (++attempt === 1) throw Object.assign(new Error('busy'), { code: 'SQLITE_BUSY' })
     }
     const callback = (trx: TransactionClientContract) =>
-      executeIn(trx, operation, { ...input(1), authorization: { proofToken: 'p1' } })
+      executeIn(trx, operation, { ...makeCommandInput(1), authorization: { proofToken: 'p1' } })
     await assert.rejects(() => client.transaction(callback), 'busy')
     const outcome = await client.transaction(callback)
     assert.isFalse(outcome.replayed)
     assert.deepInclude(calls, { parse: 2, execute: 2, work: 2 })
-    assert.equal(await count(client, 'notes'), 1)
-    const rows = await receipts(client)
+    assert.equal(await countRows(client, 'notes'), 1)
+    const rows = await listReceipts(client)
     assert.lengthOf(rows, 1)
     assert.equal(rows[0].state, 'completed')
   })
@@ -69,17 +69,20 @@ test.group('transaction owners', () => {
     assert,
   }) => {
     const { client } = await createDatabase()
-    const { operation, hooks } = noteOperation()
+    const { operation, hooks } = makeNoteOperation()
     await addProof(client, 'p1')
     await client.transaction(async (trx) => {
       hooks.beforeWork = async (context) => {
         hooks.beforeWork = undefined
         await assert.rejects(
-          () => executeIn(context.trx, operation, input(1)),
+          () => executeIn(context.trx, operation, makeCommandInput(1)),
           errors.DuplicateRequestInProgressException
         )
       }
-      await executeIn(trx, operation, { ...input(1), authorization: { proofToken: 'p1' } })
+      await executeIn(trx, operation, {
+        ...makeCommandInput(1),
+        authorization: { proofToken: 'p1' },
+      })
     })
     assert.plan(1)
   })
@@ -88,9 +91,12 @@ test.group('transaction owners', () => {
 test.group('completion', () => {
   test('completing an already completed receipt throws', async ({ assert }) => {
     const { client } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
-    await execute(client, operation, { ...input(1), authorization: { proofToken: 'p1' } })
+    await execute(client, operation, {
+      ...makeCommandInput(1),
+      authorization: { proofToken: 'p1' },
+    })
     await assert.rejects(
       () =>
         client.transaction((trx) =>
@@ -98,7 +104,7 @@ test.group('completion', () => {
         ),
       errors.ReceiptNotPendingException
     )
-    const replay = await execute(client, operation, input(1))
+    const replay = await execute(client, operation, makeCommandInput(1))
     assert.deepEqual(replay.result, { noteId: 1 })
   })
 

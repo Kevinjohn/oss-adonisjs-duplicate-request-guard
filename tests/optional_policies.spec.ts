@@ -1,6 +1,6 @@
 import { test } from '@japa/runner'
 import { execute, type Operation } from '../index.js'
-import { count, createDatabase, input, receipts } from './helpers.js'
+import { countRows, createDatabase, makeCommandInput, listReceipts } from './helpers.js'
 
 test.group('execute: optional policies', () => {
   for (const replay of [false, true]) {
@@ -50,7 +50,7 @@ test.group('execute: optional policies', () => {
             },
           }
           const fresh = await execute(client, operation, {
-            ...input(1),
+            ...makeCommandInput(1),
             authorization: 'opaque proof',
           })
           assert.deepEqual(fresh, { replayed: false, result: { noteId: 1 } })
@@ -62,13 +62,13 @@ test.group('execute: optional policies', () => {
           ])
           calls.length = 0
           const again = await execute(client, operation, {
-            ...input(1),
+            ...makeCommandInput(1),
             authorization: 'invalid on fresh',
           })
           assert.deepEqual(again, { replayed: true, result: fresh.result })
           assert.deepEqual(calls, ['access', ...(replay ? ['replay'] : [])])
-          assert.equal(await count(client, 'notes'), 1)
-          const [receipt] = await receipts(client)
+          assert.equal(await countRows(client, 'notes'), 1)
+          const [receipt] = await listReceipts(client)
           assert.equal(receipt.state, 'completed')
         })
       }
@@ -89,9 +89,9 @@ test.group('execute: optional policies', () => {
         return null
       },
     }
-    const failure = await execute(client, operation, input(1)).catch((error) => error)
+    const failure = await execute(client, operation, makeCommandInput(1)).catch((error) => error)
     assert.strictEqual(failure, denied)
     assert.equal(workRuns, 0)
-    assert.lengthOf(await receipts(client), 0)
+    assert.lengthOf(await listReceipts(client), 0)
   })
 })

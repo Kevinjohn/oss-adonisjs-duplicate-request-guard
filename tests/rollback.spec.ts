@@ -3,16 +3,16 @@ import { execute, executeIn } from '../index.js'
 import { internalHooks } from '../src/receipts.js'
 import {
   addProof,
-  auth,
-  committed,
-  count,
+  makeAuthorizedCommandInput,
+  listReceiptStates,
+  countRows,
   createDatabase,
-  input,
-  named,
-  noteOperation,
-  receipts,
-  signal,
-  within,
+  makeCommandInput,
+  makeNamedOperation,
+  makeNoteOperation,
+  listReceipts,
+  makeSignal,
+  awaitWithDeadline,
 } from './helpers.js'
 
 test.group('a failed execute never leaves a pending row', () => {
@@ -20,27 +20,27 @@ test.group('a failed execute never leaves a pending row', () => {
     assert,
   }) => {
     const { client } = await createDatabase()
-    const { operation, hooks } = noteOperation()
+    const { operation, hooks } = makeNoteOperation()
     await addProof(client, 'p1')
     hooks.afterWork = () => {
       throw new Error('after the side effect')
     }
     await client.transaction(async (trx) => {
       const swallowed = await executeIn(trx, operation, {
-        ...input(1),
+        ...makeCommandInput(1),
         authorization: { proofToken: 'p1' },
       }).catch(() => null)
       assert.isNull(swallowed)
       await trx.table('notes').insert({ scope_id: 's1', body: 'host write' })
     })
-    assert.lengthOf(await receipts(client), 0)
-    assert.equal(await count(client, 'notes'), 1)
+    assert.lengthOf(await listReceipts(client), 0)
+    assert.equal(await countRows(client, 'notes'), 1)
     const proof = await client.from('proofs').where('token', 'p1').first()
     assert.equal(proof.used, 0)
 
     hooks.afterWork = undefined
     const retry = await execute(client, operation, {
-      ...input(1),
+      ...makeCommandInput(1),
       authorization: { proofToken: 'p1' },
     })
     assert.isFalse(retry.replayed)
@@ -50,17 +50,20 @@ test.group('a failed execute never leaves a pending row', () => {
     assert,
   }) => {
     const { client } = await createDatabase()
-    const { operation, hooks } = noteOperation()
-    for (const n of [1, 2]) await addProof(client, `p${n}`)
+    const { operation, hooks } = makeNoteOperation()
+    for (const sequenceNumber of [1, 2]) await addProof(client, `p${sequenceNumber}`)
     let pending: Promise<unknown> = Promise.resolve()
     hooks.afterWork = ({ trx }) => {
-      pending = executeIn(trx, operation, { ...input(2), authorization: { proofToken: 'p2' } })
+      pending = executeIn(trx, operation, {
+        ...makeCommandInput(2),
+        authorization: { proofToken: 'p2' },
+      })
       // A cause cannot be attached to this error; the rollback must still run.
       throw Object.freeze(new Error('frozen'))
     }
     await client.transaction(async (trx) => {
       const error = await executeIn(trx, operation, {
-        ...input(1),
+        ...makeCommandInput(1),
         authorization: { proofToken: 'p1' },
       }).then(
         () => 'resolved',
@@ -70,8 +73,8 @@ test.group('a failed execute never leaves a pending row', () => {
       await trx.table('notes').insert({ scope_id: 's1', body: 'host write' })
     })
     await Promise.allSettled([pending])
-    assert.lengthOf(await receipts(client), 0)
-    assert.equal(await count(client, 'notes'), 1)
+    assert.lengthOf(await listReceipts(client), 0)
+    assert.equal(await countRows(client, 'notes'), 1)
   })
 })
 
@@ -82,7 +85,7 @@ test.group('cleanup never masks the original error', () => {
     const { client } = await createDatabase()
     await addProof(client, 'p1')
     await client.table('notes').insert({ id: 99, scope_id: 's1', body: 'existing' })
-    const { operation, hooks } = noteOperation()
+    const { operation, hooks } = makeNoteOperation()
     hooks.afterWork = async ({ trx }) => {
       await trx.rawQuery(
         `INSERT OR ROLLBACK INTO notes (id, scope_id, body) VALUES (99, 's1', 'x')`
@@ -91,7 +94,7 @@ test.group('cleanup never masks the original error', () => {
     const trx = await client.transaction()
     let caught: (Error & { code?: string }) | undefined
     try {
-      await within(executeIn(trx, operation, auth(1)))
+      await awaitWithDeadline(executeIn(trx, operation, makeAuthorizedCommandInput(1)))
     } catch (error) {
       caught = error as Error & { code?: string }
     } finally {
@@ -99,7 +102,7 @@ test.group('cleanup never masks the original error', () => {
     }
     assert.match(caught?.code ?? '', /^SQLITE_CONSTRAINT/)
     assert.match(String((caught?.cause as Error | undefined)?.message), /no such savepoint/)
-    assert.lengthOf(await receipts(client), 0)
+    assert.lengthOf(await listReceipts(client), 0)
   })
 })
 
@@ -121,11 +124,11 @@ test.group('an aborted child never commits without its receipt', (group) => {
    * once the child is there. The child resumes, and writes, only after the parent has aborted it.
    */
   function probe() {
-    const parent = named('notes.parent')
-    const child = named('notes.child')
-    const next = named('notes.next')
-    const childInWork = signal()
-    const release = signal()
+    const parent = makeNamedOperation('notes.parent')
+    const child = makeNamedOperation('notes.child')
+    const next = makeNamedOperation('notes.next')
+    const childInWork = makeSignal()
+    const release = makeSignal()
     const state = { childSettled: false, childSettledWhenNextRan: false }
     let childRun: Promise<unknown> = Promise.resolve()
     child.hooks.beforeWork = async () => {
@@ -137,7 +140,7 @@ test.group('an aborted child never commits without its receipt', (group) => {
     }
     parent.hooks.afterWork = async ({ trx }) => {
       releaseOnUnwind(release.fire)
-      childRun = executeIn(trx, child.operation, auth(2))
+      childRun = executeIn(trx, child.operation, makeAuthorizedCommandInput(2))
       const settle = () => {
         state.childSettled = true
       }
@@ -157,13 +160,13 @@ test.group('an aborted child never commits without its receipt', (group) => {
       assert,
     }) => {
       const { client } = await createDatabase()
-      for (const n of [1, 2, 3]) await addProof(client, `p${n}`)
+      for (const sequenceNumber of [1, 2, 3]) await addProof(client, `p${sequenceNumber}`)
       const { parent, child, next, state, childSettled } = probe()
       let parentError = ''
       let parentCause: unknown
-      await within(
+      await awaitWithDeadline(
         client.transaction(async (trx) => {
-          parentError = await executeIn(trx, parent.operation, auth(1)).then(
+          parentError = await executeIn(trx, parent.operation, makeAuthorizedCommandInput(1)).then(
             () => 'fulfilled',
             (error: Error) => {
               parentCause = error.cause
@@ -171,7 +174,7 @@ test.group('an aborted child never commits without its receipt', (group) => {
             }
           )
           if (waits) await childSettled()
-          await executeIn(trx, next.operation, auth(3))
+          await executeIn(trx, next.operation, makeAuthorizedCommandInput(3))
         })
       )
       assert.equal(parentError, 'validation failed')
@@ -180,22 +183,24 @@ test.group('an aborted child never commits without its receipt', (group) => {
       assert.isTrue(state.childSettledWhenNextRan)
       assert.equal(child.calls.work, 1)
       // Only the next command's note and receipt committed: no orphan note from the child.
-      assert.deepEqual(await committed(client), [['c3', 'completed']])
-      assert.equal(await count(client, 'notes'), 1)
-      const retry = await client.transaction((trx) => executeIn(trx, child.operation, auth(2)))
+      assert.deepEqual(await listReceiptStates(client), [['c3', 'completed']])
+      assert.equal(await countRows(client, 'notes'), 1)
+      const retry = await client.transaction((trx) =>
+        executeIn(trx, child.operation, makeAuthorizedCommandInput(2))
+      )
       assert.isFalse(retry.replayed)
       assert.equal(child.calls.work, 2)
-      assert.equal(await count(client, 'notes'), 2)
+      assert.equal(await countRows(client, 'notes'), 2)
     })
   }
 
   test('an aborted child stops before its next policy or work', async ({ assert }) => {
     const { client } = await createDatabase()
-    for (const n of [1, 2]) await addProof(client, `p${n}`)
-    const parent = named('notes.parent')
-    const child = named('notes.child')
-    const inAccess = signal()
-    const release = signal()
+    for (const sequenceNumber of [1, 2]) await addProof(client, `p${sequenceNumber}`)
+    const parent = makeNamedOperation('notes.parent')
+    const child = makeNamedOperation('notes.child')
+    const inAccess = makeSignal()
+    const release = makeSignal()
     // The child is inside authorizeAccess when the parent fails, and resumes once it is aborted.
     child.hooks.afterAccess = async () => {
       inAccess.fire()
@@ -204,13 +209,17 @@ test.group('an aborted child never commits without its receipt', (group) => {
     let childCode = ''
     parent.hooks.afterWork = async ({ trx }) => {
       releaseOnUnwind(release.fire)
-      const nested = executeIn(trx, child.operation, auth(2)).catch((error: { code?: string }) => {
-        childCode = error.code ?? 'other'
-      })
+      const nested = executeIn(trx, child.operation, makeAuthorizedCommandInput(2)).catch(
+        (error: { code?: string }) => {
+          childCode = error.code ?? 'other'
+        }
+      )
       await Promise.all([nested, inAccess.fired.then(() => Promise.reject(new Error('invalid')))])
     }
-    await within(
-      client.transaction((trx) => executeIn(trx, parent.operation, auth(1)).catch(() => null))
+    await awaitWithDeadline(
+      client.transaction((trx) =>
+        executeIn(trx, parent.operation, makeAuthorizedCommandInput(1)).catch(() => null)
+      )
     )
     assert.equal(childCode, 'E_UNAWAITED_NESTED_COMMAND')
     assert.equal(child.calls.access, 1)
@@ -218,6 +227,6 @@ test.group('an aborted child never commits without its receipt', (group) => {
       [child.calls.parse, child.calls.execute, child.calls.work, child.calls.replay],
       [0, 0, 0, 0]
     )
-    assert.deepEqual(await committed(client), [])
+    assert.deepEqual(await listReceiptStates(client), [])
   })
 })

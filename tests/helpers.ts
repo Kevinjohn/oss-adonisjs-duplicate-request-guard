@@ -101,11 +101,11 @@ type Auth = { proofToken: string }
 type Result = { noteId: number }
 
 /** A demo operation that records every call so tests can see what ran. */
-export function noteOperation() {
+export function makeNoteOperation() {
   const calls = { access: 0, replay: 0, parse: 0, execute: 0, work: 0 }
   type Hook = (context: OperationContext<Payload>) => Promise<void> | void
   const hooks: { afterAccess?: Hook; afterReplay?: Hook; beforeWork?: Hook; afterWork?: Hook } = {}
-  const role = async (trx: QueryClientContract, scopeId: string, actorId: string) => {
+  const readMembershipRole = async (trx: QueryClientContract, scopeId: string, actorId: string) => {
     const row = await trx.from('memberships').where({ scope_id: scopeId, user_id: actorId }).first()
     return row?.role
   }
@@ -113,7 +113,7 @@ export function noteOperation() {
     name: 'notes.add',
     async authorizeAccess(context) {
       calls.access++
-      if (!(await role(context.trx, context.scopeId, context.actorId))) {
+      if (!(await readMembershipRole(context.trx, context.scopeId, context.actorId))) {
         throw new DeniedException('access')
       }
       await hooks.afterAccess?.(context)
@@ -121,7 +121,8 @@ export function noteOperation() {
     async authorizeReplay(context) {
       calls.replay++
       const { trx, scopeId, actorId } = context
-      if ((await role(trx, scopeId, actorId)) !== 'owner') throw new DeniedException('replay')
+      if ((await readMembershipRole(trx, scopeId, actorId)) !== 'owner')
+        throw new DeniedException('replay')
       await hooks.afterReplay?.(context)
     },
     parseAuthorization(raw) {
@@ -155,27 +156,27 @@ export async function addProof(client: QueryClientContract, token: string, userI
   await client.table('proofs').insert({ token, user_id: userId })
 }
 
-export const input = (n: number, extra: Record<string, unknown> = {}) => ({
+export const makeCommandInput = (sequenceNumber: number, extra: Record<string, unknown> = {}) => ({
   actorId: 'alice',
   scopeId: 's1',
-  payload: { body: `note ${n}` },
-  command: { commandId: `c${n}`, requestKey: `k${n}` },
+  payload: { body: `note ${sequenceNumber}` },
+  command: { commandId: `c${sequenceNumber}`, requestKey: `k${sequenceNumber}` },
   ...extra,
 })
 
-export const receipts = (client: QueryClientContract) => client.from(RECEIPTS_TABLE).select('*')
-export const count = async (client: QueryClientContract, table: string) => {
+export const listReceipts = (client: QueryClientContract) => client.from(RECEIPTS_TABLE).select('*')
+export const countRows = async (client: QueryClientContract, table: string) => {
   const [row] = await client.from(table).count('* as n')
   return Number(row.n)
 }
 
 export { errors }
 
-/** Fails a test that would otherwise hang: the promise, or an error after `ms`. */
-export async function within<T>(promise: Promise<T>, ms = 5000): Promise<T> {
+/** Fails a test that would otherwise hang: the promise, or an error after `timeoutMs`. */
+export async function awaitWithDeadline<T>(promise: Promise<T>, timeoutMs = 5000): Promise<T> {
   let timer: NodeJS.Timeout | undefined
   const hung = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`hung for ${ms} ms`)), ms)
+    timer = setTimeout(() => reject(new Error(`hung for ${timeoutMs} ms`)), timeoutMs)
   })
   try {
     return await Promise.race([promise, hung])
@@ -184,31 +185,35 @@ export async function within<T>(promise: Promise<T>, ms = 5000): Promise<T> {
   }
 }
 
-export function signal() {
+export function makeSignal() {
   let fire!: () => void
   const fired = new Promise<void>((resolve) => (fire = resolve))
   return { fire, fired }
 }
 
-/** Waits for the signal, or gives up after `ms`: a serialized sibling never sends it. */
-export const awaitOrSkip = (fired: Promise<void>, ms = 300) =>
-  Promise.race([fired, new Promise<void>((resolve) => setTimeout(resolve, ms))])
+/** Waits for the signal, or gives up after `timeoutMs`: a serialized sibling never sends it. */
+export const awaitOrSkip = (fired: Promise<void>, timeoutMs = 300) =>
+  Promise.race([fired, new Promise<void>((resolve) => setTimeout(resolve, timeoutMs))])
 
-export function named(name: string) {
-  const op = noteOperation()
+export function makeNamedOperation(name: string) {
+  const op = makeNoteOperation()
   return { ...op, operation: { ...op.operation, name } }
 }
 
-export const auth = (n: number) => ({ ...input(n), authorization: { proofToken: `p${n}` } })
-export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+export const makeAuthorizedCommandInput = (sequenceNumber: number) => ({
+  ...makeCommandInput(sequenceNumber),
+  authorization: { proofToken: `p${sequenceNumber}` },
+})
+export const sleep = (delayMs: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, delayMs))
 
 /** The error code a settled call failed with, or 'fulfilled'. */
-export const codeOf = (result: PromiseSettledResult<unknown>) =>
+export const readOutcomeCode = (result: PromiseSettledResult<unknown>) =>
   result.status === 'fulfilled'
     ? 'fulfilled'
     : ((result.reason as { code?: string }).code ?? (result.reason as Error).message)
 
-export async function committed(client: Parameters<typeof receipts>[0]) {
-  const rows = await receipts(client)
+export async function listReceiptStates(client: Parameters<typeof listReceipts>[0]) {
+  const rows = await listReceipts(client)
   return rows.map((row) => [row.command_id, row.state]).sort()
 }

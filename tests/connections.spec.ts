@@ -8,10 +8,17 @@ import { Emitter } from '@adonisjs/core/events'
 import { Database } from '@adonisjs/lucid/database'
 import * as api from '../index.js'
 import { assertSupportedConnection, execute, executeIn, pruneReceipts } from '../index.js'
-import { fileWriters } from '../src/receipts.js'
-import { addProof, createDatabase, errors, input, noteOperation, prepareSchema } from './helpers.js'
+import { writersByDatabasePath } from '../src/receipts.js'
+import {
+  addProof,
+  createDatabase,
+  errors,
+  makeCommandInput,
+  makeNoteOperation,
+  prepareSchema,
+} from './helpers.js'
 
-function sqliteDatabase(filename: string) {
+function openTestDatabase(filename: string) {
   const app = new AppFactory().create(new URL('file:///tmp/'), () => {})
   return new Database(
     {
@@ -29,13 +36,18 @@ test.group('only better-sqlite3 is supported', () => {
   for (const name of ['postgres', 'mysql', 'mssql', 'sqlite3', 'libsql']) {
     test(`a ${name} connection is refused with E_UNSUPPORTED_DIALECT`, async ({ assert }) => {
       const fake = { dialect: { name }, connectionName: name, isTransaction: false } as never
-      const { operation, calls } = noteOperation()
+      const { operation, calls } = makeNoteOperation()
       await assert.rejects(
-        () => execute(fake, operation, input(1)),
+        () => execute(fake, operation, makeCommandInput(1)),
         errors.UnsupportedDialectException
       )
       await assert.rejects(
-        () => executeIn({ ...(fake as object), isTransaction: true } as never, operation, input(1)),
+        () =>
+          executeIn(
+            { ...(fake as object), isTransaction: true } as never,
+            operation,
+            makeCommandInput(1)
+          ),
         errors.UnsupportedDialectException
       )
       assert.equal(calls.access, 0)
@@ -47,16 +59,16 @@ test.group('shared SQLite file detection', () => {
   test('a closed connection releases its file', async ({ assert }) => {
     const { db, file } = await createDatabase()
     db.manager.add('first', { client: 'better-sqlite3', connection: { filename: file } })
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await addProof(db.connection(), 'p1')
     await addProof(db.connection(), 'p2')
     await execute(db.connection('first'), operation, {
-      ...input(1),
+      ...makeCommandInput(1),
       authorization: { proofToken: 'p1' },
     })
     await db.manager.close('first')
     const outcome = await execute(db.connection(), operation, {
-      ...input(2),
+      ...makeCommandInput(2),
       authorization: { proofToken: 'p2' },
     })
     assert.isFalse(outcome.replayed)
@@ -67,16 +79,16 @@ test.group('shared SQLite file detection', () => {
   }) => {
     const { file } = await createDatabase()
     const dir = realpathSync(dirname(file))
-    for (const n of [1, 2, 3]) {
-      const db = sqliteDatabase(join(dir, `tenant${n}.sqlite3`))
+    for (const sequenceNumber of [1, 2, 3]) {
+      const db = openTestDatabase(join(dir, `tenant${sequenceNumber}.sqlite3`))
       const connection = db.connection()
       // Repeated use registers one disconnect listener, beside Lucid's own.
       for (let i = 0; i < 3; i++) assertSupportedConnection(connection)
       const lucid = db.manager.get('sqlite')?.connection
       assert.equal(lucid?.listenerCount('disconnect'), 2)
-      assert.isTrue(fileWriters.has(join(dir, `tenant${n}.sqlite3`)))
+      assert.isTrue(writersByDatabasePath.has(join(dir, `tenant${sequenceNumber}.sqlite3`)))
       await db.manager.closeAll()
-      assert.isFalse(fileWriters.has(join(dir, `tenant${n}.sqlite3`)))
+      assert.isFalse(writersByDatabasePath.has(join(dir, `tenant${sequenceNumber}.sqlite3`)))
     }
   })
 
@@ -94,13 +106,16 @@ test.group('shared SQLite file detection', () => {
     assert,
   }) => {
     const { client, file } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
-    await execute(client, operation, { ...input(1), authorization: { proofToken: 'p1' } })
-    const other = sqliteDatabase(file)
+    await execute(client, operation, {
+      ...makeCommandInput(1),
+      authorization: { proofToken: 'p1' },
+    })
+    const other = openTestDatabase(file)
     try {
       await assert.rejects(
-        () => execute(other.connection(), operation, input(2)),
+        () => execute(other.connection(), operation, makeCommandInput(2)),
         errors.UnsafeSqlitePoolException
       )
     } finally {
@@ -110,16 +125,19 @@ test.group('shared SQLite file detection', () => {
 
   test('a symlinked path to the same file is refused', async ({ assert }) => {
     const { client, file } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
-    await execute(client, operation, { ...input(1), authorization: { proofToken: 'p1' } })
+    await execute(client, operation, {
+      ...makeCommandInput(1),
+      authorization: { proofToken: 'p1' },
+    })
     const link = join(dirname(file), 'link', 'alias.sqlite3')
     await mkdir(dirname(link))
     await symlink(file, link)
-    const other = sqliteDatabase(link)
+    const other = openTestDatabase(link)
     try {
       await assert.rejects(
-        () => execute(other.connection(), operation, input(2)),
+        () => execute(other.connection(), operation, makeCommandInput(2)),
         errors.UnsafeSqlitePoolException
       )
     } finally {
@@ -133,7 +151,7 @@ test.group('shared SQLite file detection', () => {
     const { client, file } = await createDatabase()
     assertSupportedConnection(client)
     for (const padded of [`${file} `, ` ${file}`, `\t${file}\n`]) {
-      const other = sqliteDatabase(padded)
+      const other = openTestDatabase(padded)
       try {
         assert.throws(() => assertSupportedConnection(other.connection()), /share .*db\.sqlite3/)
       } finally {
@@ -145,7 +163,7 @@ test.group('shared SQLite file detection', () => {
   test('padded :memory: and blank filenames are anonymous, as the driver reads them', async ({
     assert,
   }) => {
-    const dbs = [' :memory: ', ' :memory: ', '  ', '  '].map(sqliteDatabase)
+    const dbs = [' :memory: ', ' :memory: ', '  ', '  '].map(openTestDatabase)
     try {
       for (const db of dbs) assert.doesNotThrow(() => assertSupportedConnection(db.connection()))
     } finally {
@@ -159,8 +177,8 @@ test.group('shared SQLite file detection', () => {
     const linkDir = join(dirname(file), 'alias')
     await mkdir(realDir)
     await symlink(realDir, linkDir)
-    const first = sqliteDatabase(join(realDir, 'new.sqlite3'))
-    const second = sqliteDatabase(join(linkDir, 'new.sqlite3'))
+    const first = openTestDatabase(join(realDir, 'new.sqlite3'))
+    const second = openTestDatabase(join(linkDir, 'new.sqlite3'))
     try {
       assert.doesNotThrow(() => assertSupportedConnection(first.connection()))
       assert.throws(() => assertSupportedConnection(second.connection()), /share .*new\.sqlite3/)
@@ -173,8 +191,8 @@ test.group('shared SQLite file detection', () => {
   test(':memory: databases are separate and never refused, even open side by side', async ({
     assert,
   }) => {
-    const { operation } = noteOperation()
-    const dbs = [sqliteDatabase(':memory:'), sqliteDatabase(':memory:')]
+    const { operation } = makeNoteOperation()
+    const dbs = [openTestDatabase(':memory:'), openTestDatabase(':memory:')]
     try {
       for (const db of dbs) {
         await prepareSchema(db.connection())
@@ -182,7 +200,7 @@ test.group('shared SQLite file detection', () => {
       }
       for (const db of dbs) {
         const outcome = await execute(db.connection(), operation, {
-          ...input(1),
+          ...makeCommandInput(1),
           authorization: { proofToken: 'p1' },
         })
         assert.isFalse(outcome.replayed)
@@ -205,11 +223,14 @@ test.group('API surface', () => {
       connection: { filename: file },
       useNullAsDefault: true,
     })
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await addProof(db.connection(), 'p1')
-    await execute(db.connection(), operation, { ...input(1), authorization: { proofToken: 'p1' } })
+    await execute(db.connection(), operation, {
+      ...makeCommandInput(1),
+      authorization: { proofToken: 'p1' },
+    })
     await assert.rejects(
-      () => execute(db.connection('second'), operation, input(2)),
+      () => execute(db.connection('second'), operation, makeCommandInput(2)),
       errors.UnsafeSqlitePoolException
     )
     await assert.rejects(
