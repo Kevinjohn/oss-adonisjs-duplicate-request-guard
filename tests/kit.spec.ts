@@ -3,12 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from '@japa/runner'
 import BetterSqlite3 from 'better-sqlite3'
-import { noteOperation } from './helpers.js'
+import { makeNoteOperation } from './helpers.js'
 import { bootKit, fixtureGuard, type KitFixture } from './kit_fixture.js'
 
 const { executeIn, execute, RECEIPTS_TABLE, errors } = fixtureGuard
 
-const busy = () => Object.assign(new Error('simulated busy'), { code: 'SQLITE_BUSY' })
+const makeBusyError = () => Object.assign(new Error('simulated busy'), { code: 'SQLITE_BUSY' })
 
 test.group('executeIn inside Account Kit 0.4.0 authentication.withCurrent', (group) => {
   let fixture: KitFixture
@@ -18,20 +18,20 @@ test.group('executeIn inside Account Kit 0.4.0 authentication.withCurrent', (gro
     return () => fixture.close()
   })
 
-  async function setup() {
-    const n = ++users
-    const credential = await fixture.signIn(`user-${n}@x.test`)
-    const token = `p${n}`
+  async function prepareGuardedNotes() {
+    const sequenceNumber = ++users
+    const credential = await fixture.signIn(`user-${sequenceNumber}@x.test`)
+    const token = `p${sequenceNumber}`
     await fixture.db.table('proofs').insert({ token, user_id: credential.userId })
-    const { operation, calls, hooks } = noteOperation()
+    const { operation, calls, hooks } = makeNoteOperation()
     const command = {
       actorId: credential.userId,
       scopeId: 's1',
-      payload: { body: `kit ${n}` },
-      command: { commandId: `kit-c${n}`, requestKey: `kit-k${n}` },
+      payload: { body: `kit ${sequenceNumber}` },
+      command: { commandId: `kit-c${sequenceNumber}`, requestKey: `kit-k${sequenceNumber}` },
       authorization: { proofToken: token },
     }
-    const state = async () => ({
+    const readKitAndReceiptState = async () => ({
       receipts: await fixture.db
         .from(RECEIPTS_TABLE)
         .where('command_id', command.command.commandId),
@@ -39,11 +39,11 @@ test.group('executeIn inside Account Kit 0.4.0 authentication.withCurrent', (gro
       pending: await fixture.db.from(RECEIPTS_TABLE).where('state', 'pending'),
       proof: await fixture.db.from('proofs').where('token', token).first(),
     })
-    return { credential, operation, calls, hooks, command, state }
+    return { credential, operation, calls, hooks, command, state: readKitAndReceiptState }
   }
 
   test('(a) withCurrent has committed when it returns', async ({ assert }) => {
-    const { credential, operation, command } = await setup()
+    const { credential, operation, command } = await prepareGuardedNotes()
     const outcome = await fixture.kit.authentication.withCurrent(credential, ({ trx }) =>
       executeIn(trx, operation, command)
     )
@@ -71,10 +71,10 @@ test.group('executeIn inside Account Kit 0.4.0 authentication.withCurrent', (gro
   test('(b) a rerun after a busy error mid-work leaves one receipt and one side effect', async ({
     assert,
   }) => {
-    const { credential, operation, calls, hooks, command, state } = await setup()
+    const { credential, operation, calls, hooks, command, state } = await prepareGuardedNotes()
     let runs = 0
     hooks.beforeWork = () => {
-      if (calls.work === 1) throw busy()
+      if (calls.work === 1) throw makeBusyError()
     }
     const outcome = await fixture.kit.authentication.withCurrent(credential, ({ trx }) => {
       runs++
@@ -94,11 +94,11 @@ test.group('executeIn inside Account Kit 0.4.0 authentication.withCurrent', (gro
   test('(b) a rerun after completion but before commit runs fresh, not as a replay', async ({
     assert,
   }) => {
-    const { credential, operation, calls, command, state } = await setup()
+    const { credential, operation, calls, command, state } = await prepareGuardedNotes()
     let runs = 0
     const outcome = await fixture.kit.authentication.withCurrent(credential, async ({ trx }) => {
       const result = await executeIn(trx, operation, command)
-      if (++runs === 1) throw busy()
+      if (++runs === 1) throw makeBusyError()
       return result
     })
     assert.equal(runs, 2)
@@ -113,7 +113,7 @@ test.group('executeIn inside Account Kit 0.4.0 authentication.withCurrent', (gro
   test('(b) real lock contention from another connection is waited out by the Kit', async ({
     assert,
   }) => {
-    const { credential, operation, calls, command, state } = await setup()
+    const { credential, operation, calls, command, state } = await prepareGuardedNotes()
     const other = new BetterSqlite3(fixture.file)
     const ownerClient = fixture.db.connection().getWriteClient()
     let runs = 0
@@ -169,7 +169,7 @@ test.group('executeIn inside Account Kit 0.4.0 authentication.withCurrent', (gro
   test('(b) the Kit gives up after about 5 seconds of contention and leaves nothing', async ({
     assert,
   }) => {
-    const { credential, operation, calls, command, state } = await setup()
+    const { credential, operation, calls, command, state } = await prepareGuardedNotes()
     const other = new BetterSqlite3(fixture.file)
     other.exec('BEGIN IMMEDIATE')
     const started = performance.now()
@@ -192,7 +192,7 @@ test.group('executeIn inside Account Kit 0.4.0 authentication.withCurrent', (gro
   test('a host rollback leaves nothing, then a retry commits once and replay writes nothing', async ({
     assert,
   }) => {
-    const { credential, operation, calls, command, state } = await setup()
+    const { credential, operation, calls, command, state } = await prepareGuardedNotes()
     await assert.rejects(
       () =>
         fixture.kit.authentication.withCurrent(credential, async ({ trx }) => {
@@ -225,7 +225,7 @@ test.group('executeIn inside Account Kit 0.4.0 authentication.withCurrent', (gro
   })
 
   test('execute (managed) refuses the Kit transaction', async ({ assert }) => {
-    const { credential, operation, command } = await setup()
+    const { credential, operation, command } = await prepareGuardedNotes()
     await assert.rejects(
       () =>
         fixture.kit.authentication.withCurrent(credential, ({ trx }) =>

@@ -118,8 +118,8 @@ export class ReceiptSchemaException extends Exception {
 export class ReceiptNotPendingException extends Exception {
   static code = 'E_RECEIPT_NOT_PENDING'
   static status = 500
-  constructor(commandId: string, changes: number) {
-    super(`Receipt "${commandId}" was not pending (updated ${changes} rows)`, {
+  constructor(commandId: string, updatedRowCount: number) {
+    super(`Receipt "${commandId}" was not pending (updated ${updatedRowCount} rows)`, {
       code: ReceiptNotPendingException.code,
       status: ReceiptNotPendingException.status,
     })

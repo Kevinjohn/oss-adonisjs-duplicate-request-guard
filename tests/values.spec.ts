@@ -1,6 +1,13 @@
 import { test } from '@japa/runner'
 import { execute, RECEIPTS_TABLE } from '../index.js'
-import { addProof, createDatabase, errors, input, noteOperation, receipts } from './helpers.js'
+import {
+  addProof,
+  createDatabase,
+  errors,
+  makeCommandInput,
+  makeNoteOperation,
+  listReceipts,
+} from './helpers.js'
 
 class Point {
   constructor(
@@ -16,7 +23,7 @@ const sparse = [1, , 3]
 test.group('only plain JSON data is accepted', () => {
   test('a function or symbol in the result is refused and nothing commits', async ({ assert }) => {
     const { client } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
     for (const bad of [
       { noteId: 1, toString() {} },
@@ -24,17 +31,17 @@ test.group('only plain JSON data is accepted', () => {
     ]) {
       const op = { ...operation, work: () => bad as never }
       await assert.rejects(
-        () => execute(client, op, { ...input(1), authorization: { proofToken: 'p1' } }),
+        () => execute(client, op, { ...makeCommandInput(1), authorization: { proofToken: 'p1' } }),
         errors.InvalidCommandResultException
       )
     }
-    assert.lengthOf(await receipts(client), 0)
+    assert.lengthOf(await listReceipts(client), 0)
     const ok = await execute(client, operation, {
-      ...input(1),
+      ...makeCommandInput(1),
       authorization: { proofToken: 'p1' },
     })
     assert.isFalse(ok.replayed)
-    const replay = await execute(client, operation, input(1))
+    const replay = await execute(client, operation, makeCommandInput(1))
     assert.deepEqual(replay.result, ok.result)
   })
 
@@ -42,7 +49,7 @@ test.group('only plain JSON data is accepted', () => {
     assert,
   }) => {
     const { client } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
     for (const bad of [
       Object.assign(Array(3), [1], { 2: 3, extra: true }),
@@ -50,16 +57,16 @@ test.group('only plain JSON data is accepted', () => {
     ]) {
       const op = { ...operation, work: () => bad as never }
       await assert.rejects(
-        () => execute(client, op, { ...input(1), authorization: { proofToken: 'p1' } }),
+        () => execute(client, op, { ...makeCommandInput(1), authorization: { proofToken: 'p1' } }),
         errors.InvalidCommandResultException
       )
     }
-    assert.lengthOf(await receipts(client), 0)
+    assert.lengthOf(await listReceipts(client), 0)
   })
 
   test('accessors, hidden keys and array methods in the result are refused', async ({ assert }) => {
     const { client } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
     let reads = 0
     const indexGetter = Object.defineProperty([0], 0, { get: () => ++reads, enumerable: true })
@@ -83,22 +90,22 @@ test.group('only plain JSON data is accepted', () => {
     for (const [name, value] of bad) {
       const op = { ...operation, work: () => value as never }
       const error = await execute(client, op, {
-        ...input(1),
+        ...makeCommandInput(1),
         authorization: { proofToken: 'p1' },
       }).catch((e) => e)
       if (!(error instanceof errors.InvalidCommandResultException)) accepted.push(name)
     }
     assert.deepEqual(accepted, [])
     assert.equal(reads, 0)
-    assert.lengthOf(await receipts(client), 0)
+    assert.lengthOf(await listReceipts(client), 0)
   })
 
   test('a payload with a getter is refused before authorizeAccess', async ({ assert }) => {
     const { client } = await createDatabase()
-    const { operation, calls } = noteOperation()
+    const { operation, calls } = makeNoteOperation()
     const payload = Object.defineProperty({ body: 'x' }, 'n', { get: () => 1, enumerable: true })
     await assert.rejects(
-      () => execute(client, operation, input(1, { payload })),
+      () => execute(client, operation, makeCommandInput(1, { payload })),
       errors.InvalidCommandValueException
     )
     assert.equal(calls.access, 0)
@@ -106,35 +113,39 @@ test.group('only plain JSON data is accepted', () => {
 
   test('frozen data and an own __proto__ key are plain data', async ({ assert }) => {
     const { client } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
     const payload = Object.freeze(JSON.parse('{"body":"x","__proto__":{"k":[1,2]}}'))
     const result = Object.freeze({ noteId: 7, list: Object.freeze([1, { a: 2 }]) })
     const op = { ...operation, work: () => result }
     const fresh = await execute(client, op, {
-      ...input(1, { payload }),
+      ...makeCommandInput(1, { payload }),
       authorization: { proofToken: 'p1' },
     })
     assert.isFalse(fresh.replayed)
     const replay = await execute(
       client,
       op,
-      input(1, { payload: JSON.parse(JSON.stringify(payload)) })
+      makeCommandInput(1, { payload: JSON.parse(JSON.stringify(payload)) })
     )
     assert.isTrue(replay.replayed)
     assert.deepEqual(replay.result, { noteId: 7, list: [1, { a: 2 }] })
-    const conflict = await execute(client, op, input(1, { payload: { body: 'x' } })).catch((e) => e)
+    const conflict = await execute(
+      client,
+      op,
+      makeCommandInput(1, { payload: { body: 'x' } })
+    ).catch((e) => e)
     assert.instanceOf(conflict, errors.DuplicateRequestConflictException)
   })
 
   test('an undefined result is a server error, distinct from a bad payload', async ({ assert }) => {
     const { client } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
     const error = await execute(
       client,
       { ...operation, work: () => undefined as never },
-      { ...input(1), authorization: { proofToken: 'p1' } }
+      { ...makeCommandInput(1), authorization: { proofToken: 'p1' } }
     ).catch((e) => e)
     assert.instanceOf(error, errors.InvalidCommandResultException)
     assert.equal(error.status, 500)
@@ -163,30 +174,30 @@ test.group('only plain JSON data is accepted', () => {
       assert,
     }) => {
       const { client } = await createDatabase()
-      const { operation, calls } = noteOperation()
+      const { operation, calls } = makeNoteOperation()
       const error = await execute(
         client,
         operation,
-        input(1, { payload: { body: 'x', extra: value } })
+        makeCommandInput(1, { payload: { body: 'x', extra: value } })
       ).catch((e) => e)
       assert.instanceOf(error, errors.InvalidCommandValueException)
       assert.equal(error.status, 400)
       assert.equal(calls.work, 0)
-      assert.lengthOf(await receipts(client), 0)
+      assert.lengthOf(await listReceipts(client), 0)
     })
   }
 
   test('plain JSON payloads that differ never share a receipt', async ({ assert }) => {
     const { client } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
     await execute(client, operation, {
-      ...input(1, { payload: { body: 'x', extra: null } }),
+      ...makeCommandInput(1, { payload: { body: 'x', extra: null } }),
       authorization: { proofToken: 'p1' },
     })
     for (const extra of [{}, [], 0, '', false, 'null']) {
       await assert.rejects(
-        () => execute(client, operation, input(1, { payload: { body: 'x', extra } })),
+        () => execute(client, operation, makeCommandInput(1, { payload: { body: 'x', extra } })),
         errors.DuplicateRequestConflictException
       )
     }
@@ -194,16 +205,16 @@ test.group('only plain JSON data is accepted', () => {
 
   test('key order does not change the payload identity', async ({ assert }) => {
     const { client } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
     await execute(client, operation, {
-      ...input(1, { payload: { body: 'x', meta: { a: 1, b: 2 } } }),
+      ...makeCommandInput(1, { payload: { body: 'x', meta: { a: 1, b: 2 } } }),
       authorization: { proofToken: 'p1' },
     })
     const replay = await execute(
       client,
       operation,
-      input(1, { payload: { meta: { b: 2, a: 1 }, body: 'x' } })
+      makeCommandInput(1, { payload: { meta: { b: 2, a: 1 }, body: 'x' } })
     )
     assert.isTrue(replay.replayed)
   })
@@ -214,26 +225,33 @@ test.group('schema and value edges', () => {
     assert,
   }) => {
     const { client } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     // The phase-3 stub: command_id unique across every actor.
     await client.schema.alterTable(RECEIPTS_TABLE, (table) => table.unique(['command_id']))
     await addProof(client, 'p1')
-    await execute(client, operation, { ...input(1), authorization: { proofToken: 'p1' } })
+    await execute(client, operation, {
+      ...makeCommandInput(1),
+      authorization: { proofToken: 'p1' },
+    })
     await assert.rejects(
-      () => execute(client, operation, input(1, { actorId: 'bob' })),
+      () => execute(client, operation, makeCommandInput(1, { actorId: 'bob' })),
       errors.ReceiptSchemaException
     )
   })
 
   test('-0 and 0 are the same JSON value', async ({ assert }) => {
     const { client } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
     await execute(client, operation, {
-      ...input(1, { payload: { body: 'x', n: -0 } }),
+      ...makeCommandInput(1, { payload: { body: 'x', n: -0 } }),
       authorization: { proofToken: 'p1' },
     })
-    const replay = await execute(client, operation, input(1, { payload: { body: 'x', n: 0 } }))
+    const replay = await execute(
+      client,
+      operation,
+      makeCommandInput(1, { payload: { body: 'x', n: 0 } })
+    )
     assert.isTrue(replay.replayed)
   })
 
@@ -241,28 +259,32 @@ test.group('schema and value edges', () => {
     assert,
   }) => {
     const { client } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
     const shared = { k: 1 }
     const bare = Object.assign(Object.create(null) as object, { k: 1 })
     await execute(client, operation, {
-      ...input(1, { payload: { body: 'x', a: shared, b: shared, c: bare } }),
+      ...makeCommandInput(1, { payload: { body: 'x', a: shared, b: shared, c: bare } }),
       authorization: { proofToken: 'p1' },
     })
     const replay = await execute(
       client,
       operation,
-      input(1, { payload: { body: 'x', a: { k: 1 }, b: { k: 1 }, c: { k: 1 } } })
+      makeCommandInput(1, { payload: { body: 'x', a: { k: 1 }, b: { k: 1 }, c: { k: 1 } } })
     )
     assert.isTrue(replay.replayed)
   })
 
   test('the payload is validated before authorizeAccess runs', async ({ assert }) => {
     const { client } = await createDatabase()
-    const { operation, calls } = noteOperation()
+    const { operation, calls } = makeNoteOperation()
     await assert.rejects(
       () =>
-        execute(client, operation, input(1, { actorId: 'mallory', payload: { n: Number.NaN } })),
+        execute(
+          client,
+          operation,
+          makeCommandInput(1, { actorId: 'mallory', payload: { n: Number.NaN } })
+        ),
       errors.InvalidCommandValueException
     )
     assert.equal(calls.access, 0)

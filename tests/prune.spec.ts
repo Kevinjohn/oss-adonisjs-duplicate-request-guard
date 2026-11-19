@@ -1,30 +1,46 @@
 import { test } from '@japa/runner'
 import { Worker } from 'node:worker_threads'
 import { execute, pruneReceipts, RECEIPTS_TABLE } from '../index.js'
-import { addProof, count, createDatabase, input, noteOperation, receipts } from './helpers.js'
+import {
+  addProof,
+  countRows,
+  createDatabase,
+  makeCommandInput,
+  makeNoteOperation,
+  listReceipts,
+} from './helpers.js'
 
 const N = 30
 async function seed(client: Parameters<typeof addProof>[0]) {
   for (let i = 1; i <= N; i++) await addProof(client, `p${i}`)
 }
 type Client = Awaited<ReturnType<typeof createDatabase>>['client']
-type Operation = ReturnType<typeof noteOperation>['operation']
+type Operation = ReturnType<typeof makeNoteOperation>['operation']
 const runAll = (client: Client, operation: Operation) =>
   Promise.all(
     Array.from({ length: N }, (_, i) =>
-      execute(client, operation, { ...input(i + 1), authorization: { proofToken: `p${i + 1}` } })
+      execute(client, operation, {
+        ...makeCommandInput(i + 1),
+        authorization: { proofToken: `p${i + 1}` },
+      })
     )
   )
 
 test.group('pruneReceipts', () => {
   test('deletes completed receipts older than the cutoff only', async ({ assert }) => {
     const { client } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
     await addProof(client, 'p2')
     await addProof(client, 'p3')
-    await execute(client, operation, { ...input(1), authorization: { proofToken: 'p1' } })
-    await execute(client, operation, { ...input(2), authorization: { proofToken: 'p2' } })
+    await execute(client, operation, {
+      ...makeCommandInput(1),
+      authorization: { proofToken: 'p1' },
+    })
+    await execute(client, operation, {
+      ...makeCommandInput(2),
+      authorization: { proofToken: 'p2' },
+    })
     await client
       .from(RECEIPTS_TABLE)
       .where('command_id', 'c1')
@@ -43,14 +59,14 @@ test.group('pruneReceipts', () => {
     })
 
     assert.equal(await pruneReceipts(client, { olderThan: new Date('2025-01-01T00:00:00Z') }), 1)
-    const left = await receipts(client)
+    const left = await listReceipts(client)
     assert.sameMembers(
       left.map((row) => row.command_id),
       ['c2', 'stray']
     )
     // A pruned identity is fresh again.
     const rerun = await execute(client, operation, {
-      ...input(1),
+      ...makeCommandInput(1),
       authorization: { proofToken: 'p3' },
     })
     assert.isFalse(rerun.replayed)
@@ -60,7 +76,7 @@ test.group('pruneReceipts', () => {
     assert,
   }) => {
     const { client } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await seed(client)
     const everything = { olderThan: new Date('2100-01-01T00:00:00Z') }
     const executes = runAll(client, operation)
@@ -70,12 +86,12 @@ test.group('pruneReceipts', () => {
     await prunes
     assert.isTrue(outcomes.every((outcome) => !outcome.replayed))
     assert.lengthOf(await client.from(RECEIPTS_TABLE).where('state', 'pending'), 0)
-    assert.equal(await count(client, 'notes'), N)
+    assert.equal(await countRows(client, 'notes'), N)
   })
 
   test('prune with a past cutoff racing executes keeps every fresh receipt', async ({ assert }) => {
     const { client } = await createDatabase()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await seed(client)
     const cutoff = { olderThan: new Date(Date.now() - 1) }
     const [outcomes, deleted] = await Promise.all([
@@ -87,12 +103,12 @@ test.group('pruneReceipts', () => {
       deleted.reduce((a, b) => a + b, 0),
       0
     )
-    assert.lengthOf(await receipts(client), N)
+    assert.lengthOf(await listReceipts(client), N)
   })
 
   test('prune from another connection (worker thread) racing executes', async ({ assert }) => {
     const { client, file } = await createDatabase()
-    const { operation, hooks } = noteOperation()
+    const { operation, hooks } = makeNoteOperation()
     await seed(client)
     const stop = new Int32Array(new SharedArrayBuffer(4))
     // [work started, work finished]: lets the worker see guarded work in flight.
@@ -131,7 +147,7 @@ test.group('pruneReceipts', () => {
     assert.isAbove(overlapped, 0)
     assert.isTrue(outcomes.every((outcome) => !outcome.replayed))
     assert.lengthOf(await client.from(RECEIPTS_TABLE).where('state', 'pending'), 0)
-    assert.equal(await count(client, 'notes'), N)
+    assert.equal(await countRows(client, 'notes'), N)
     assert.isAtMost(deleted, N)
   }).timeout(30_000)
 })

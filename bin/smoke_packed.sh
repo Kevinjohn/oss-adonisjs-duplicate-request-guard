@@ -8,24 +8,24 @@
 set -euo pipefail
 TARBALL=${1:?usage: smoke_packed.sh <tarball>}
 [ -f "$TARBALL" ] || { echo "smoke: no such tarball: $TARBALL" >&2; exit 1; }
-REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-SMOKE=$(mktemp -d)
-trap 'rm -rf "$SMOKE"' EXIT
-tar -xzf "$TARBALL" -C "$SMOKE"
-PKG="$SMOKE/package"
-[ -f "$PKG/package.json" ] || { echo "smoke: tarball has no package/package.json" >&2; exit 1; }
-ln -s "$REPO/node_modules" "$PKG/node_modules"
-node --input-type=module - "$PKG" <<'JS'
+REPOSITORY_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+SMOKE_DIRECTORY=$(mktemp -d)
+trap 'rm -rf "$SMOKE_DIRECTORY"' EXIT
+tar -xzf "$TARBALL" -C "$SMOKE_DIRECTORY"
+PACKAGE_DIRECTORY="$SMOKE_DIRECTORY/package"
+[ -f "$PACKAGE_DIRECTORY/package.json" ] || { echo "smoke: tarball has no package/package.json" >&2; exit 1; }
+ln -s "$REPOSITORY_ROOT/node_modules" "$PACKAGE_DIRECTORY/node_modules"
+node --input-type=module - "$PACKAGE_DIRECTORY" <<'JS'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-const pkgDir = process.argv[2]
+const packageDirectory = process.argv[2]
 const fail = (message) => {
   console.error(`smoke: ${message}`)
   process.exit(1)
 }
-const pkg = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'))
+const pkg = JSON.parse(readFileSync(join(packageDirectory, 'package.json'), 'utf8'))
 const entries = Object.entries(pkg.exports ?? {})
 if (entries.length === 0) fail('package.json has no exports')
 
@@ -34,7 +34,7 @@ for (const [key, target] of entries) {
   if (typeof target !== 'string') {
     fail(`exports["${key}"] is not a plain path: ${JSON.stringify(target)}`)
   }
-  const file = join(pkgDir, target)
+  const file = join(packageDirectory, target)
   if (!existsSync(file)) fail(`exports["${key}"] -> ${target} is not in the tarball`)
   try {
     modules[key] = await import(pathToFileURL(file).href)
@@ -60,7 +60,7 @@ for (const name of names) {
   if (!(name in root)) fail(`root entry is missing export "${name}"`)
 }
 
-const { stubsRoot } = await import(pathToFileURL(join(pkgDir, 'build/configure.js')).href)
+const { stubsRoot } = await import(pathToFileURL(join(packageDirectory, 'build/configure.js')).href)
 const stub = join(stubsRoot, 'migrations/create_request_receipts_table.stub')
 if (!existsSync(stub)) fail(`stub not packed: ${stub}`)
 console.log(`smoke: ok (${entries.length} exports, stub present)`)

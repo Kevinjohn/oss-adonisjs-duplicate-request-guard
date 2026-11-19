@@ -8,7 +8,13 @@ import Configure from '@adonisjs/core/commands/configure'
 import { IgnitorFactory } from '@adonisjs/core/factories'
 import { configure } from '../configure.js'
 import { execute } from '../index.js'
-import { addProof, createDatabase, input, loadMigration, noteOperation } from './helpers.js'
+import {
+  addProof,
+  createDatabase,
+  makeCommandInput,
+  loadMigration,
+  makeNoteOperation,
+} from './helpers.js'
 
 const PACKAGE = '@kevinjohn/adonisjs-duplicate-request-guard'
 
@@ -57,10 +63,13 @@ test('configure publishes the receipts migration once, and it works', async ({ a
     const { client } = await createDatabase()
     await client.schema.dropTable('request_receipts')
     await new Migration(client, 'published', false).execUp()
-    const { operation } = noteOperation()
+    const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
-    await execute(client, operation, { ...input(1), authorization: { proofToken: 'p1' } })
-    const replay = await execute(client, operation, input(1))
+    await execute(client, operation, {
+      ...makeCommandInput(1),
+      authorization: { proofToken: 'p1' },
+    })
+    const replay = await execute(client, operation, makeCommandInput(1))
     assert.isTrue(replay.replayed)
   } finally {
     await rm(root, { recursive: true, force: true })

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from '@japa/runner'
-import { collectExit, outputOf } from './child_process.js'
+import { collectExit, captureChildOutput } from './child_process.js'
 
 const releaseScript = new URL('../../bin/release_check.sh', import.meta.url)
 const digest = 'a'.repeat(64)
@@ -62,7 +62,7 @@ for (const hash of ['missing', 'failed', 'invalid', 'valid'] as const) {
       env: { PATH: commands, GITHUB_OUTPUT: output, GITHUB_REPOSITORY: 'example/repo' },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    const result = await collectExit(child, await outputOf(child))
+    const result = await collectExit(child, await captureChildOutput(child))
     const notes = join(root, 'tmp/release/notes.md')
     assert.equal(await readFile(join(root, 'stages'), 'utf8'), 'build\npack\nsmoke\n', result.text)
 
