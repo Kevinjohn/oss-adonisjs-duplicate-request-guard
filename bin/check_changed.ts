@@ -166,33 +166,41 @@ function run(
     let output = ''
     let spawnError: Error | undefined
     let timedOut = false
-    let graceTimer: NodeJS.Timeout | undefined
     child.stdout.on('data', (chunk) => (output += chunk))
     child.stderr.on('data', (chunk) => (output += chunk))
     const timer = setTimeout(() => {
       timedOut = true
       output += `\n[check:changed] stopped after ${stepLimitMs / 60000} minutes\n`
+      let signalError: unknown
       try {
         signalOwnedProcess(child, 'SIGKILL')
       } catch (error) {
+        signalError = error
         output += `[check:changed] timeout cleanup failed: ${describeError(error)}\n`
       }
-      // A killed group normally closes at once; do not wait forever for a close that never comes.
-      graceTimer = setTimeout(
-        () =>
-          abandonActive?.(new Error('The owned child did not close after the timeout SIGKILL.')),
-        reapGraceMs
+      void waitForOwnedProcessExit(child, reapGraceMs).then(
+        (stopped) =>
+          releaseChild(
+            signalError ??
+              (stopped
+                ? undefined
+                : new Error('The owned process group did not exit after SIGKILL.'))
+          ),
+        (error) => releaseChild(signalError ?? error)
       )
     }, stepLimitMs)
     child.once('error', (error) => {
       spawnError = error
     })
     let settled = false
-    abandonActive = (error) => {
+    const releaseChild = (error?: unknown) => {
       child.stdout.destroy()
       child.stderr.destroy()
       child.unref()
       void finish(null, null, error)
+    }
+    abandonActive = (error) => {
+      if (!timedOut) releaseChild(error)
     }
     const finish = async (
       status: number | null,
@@ -202,13 +210,12 @@ function run(
       if (settled) return
       settled = true
       clearTimeout(timer)
-      clearTimeout(graceTimer)
       let cleanupError: unknown = terminalError
       if (interruptedBy && interruptionCleanup) {
         try {
           await interruptionCleanup
         } catch (error) {
-          cleanupError = error
+          cleanupError ??= error
         }
       }
       if (active === child) active = undefined
@@ -219,7 +226,10 @@ function run(
       }
       resolve({ status: timedOut || signal ? null : status, output, cleanupError })
     }
-    child.once('close', (status, signal) => void finish(status, signal))
+    child.once('close', (status, signal) => {
+      // A timed-out child can close while descendants in its process group are still running.
+      if (!timedOut) void finish(status, signal)
+    })
   })
 }
 
@@ -245,7 +255,7 @@ for (const step of planChangedChecks(changes, { static: flags.includes('--static
     console.log(`skip ${step.label} (${step.skip})`)
     continue
   }
-  const { status, output } = await run(step)
+  const { status, output, cleanupError } = await run(step)
   const tests = step.countsTests ? executedTests(output) : undefined
   const problem =
     status !== 0
@@ -259,6 +269,7 @@ for (const step of planChangedChecks(changes, { static: flags.includes('--static
     failed = true
     console.log(`fail ${step.label} (${problem}): ${step.command.join(' ')}`)
     console.log(output.trimEnd().split('\n').slice(-40).join('\n'))
+    if (cleanupError !== undefined) break
   } else {
     console.log(`pass ${step.label}${tests === undefined ? '' : ` (${tests} tests)`}`)
   }
