@@ -1,6 +1,6 @@
 import { test } from '@japa/runner'
 import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
-import { assertSupportedConnection, executeIn } from '../index.js'
+import { assertSupportedConnection, execute, executeIn } from '../index.js'
 import { addProof, auth, count, createDatabase, named, noteOperation, receipts } from './helpers.js'
 
 /** A statement that makes SQLite roll back the whole transaction, not just the statement. */
@@ -156,6 +156,25 @@ test.group('a lost transaction is lost for every client on its connection', () =
     assert.equal(laterCode, 'E_TRANSACTION_LOST')
     assert.lengthOf(await receipts(client), 0)
     assert.equal(await count(client, 'notes'), 1)
+  })
+
+  test('a managed owner rolls back on transaction loss and can reacquire the connection', async ({
+    assert,
+  }) => {
+    const client = await database()
+    const { operation, hooks } = noteOperation()
+    hooks.afterWork = ({ trx }) => endTransaction(trx)
+
+    const failureCode = await execute(client, operation, auth(1)).catch(codeOf)
+    assert.equal(failureCode, 'SQLITE_CONSTRAINT_PRIMARYKEY')
+    assert.lengthOf(await receipts(client), 0)
+    assert.equal(await count(client, 'notes'), 1)
+
+    hooks.afterWork = undefined
+    const outcome = await execute(client, operation, auth(1))
+    assert.isFalse(outcome.replayed)
+    assert.lengthOf(await receipts(client), 1)
+    assert.equal(await count(client, 'notes'), 2)
   })
 
   test('the next transaction on the connection runs commands again', async ({ assert }) => {
