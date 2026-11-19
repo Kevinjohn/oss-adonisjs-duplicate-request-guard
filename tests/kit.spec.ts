@@ -114,18 +114,48 @@ test.group('executeIn inside Account Kit 0.3.3 authentication.withCurrent', (gro
   }) => {
     const { credential, operation, calls, command, state } = await setup()
     const other = new BetterSqlite3(fixture.file)
-    other.exec('BEGIN IMMEDIATE')
+    const ownerClient = fixture.db.connection().getWriteClient()
     let runs = 0
-    const started = performance.now()
-    const pending = fixture.kit.authentication.withCurrent(credential, ({ trx }) => {
-      runs++
-      return executeIn(trx, operation, command)
-    })
-    await new Promise((resolve) => setTimeout(resolve, 150))
-    other.exec('COMMIT')
-    other.close()
-    const outcome = await pending
-    assert.isAbove(performance.now() - started, 140)
+    let observeBusy!: () => void
+    const observedBusy = new Promise<void>((resolve) => (observeBusy = resolve))
+    const onQueryError = (error: { code?: string }, query: { sql?: string }) => {
+      if (error.code === 'SQLITE_BUSY' && query.sql?.includes('update account_transaction_lock')) {
+        observeBusy()
+      }
+    }
+    let deadline: NodeJS.Timeout | undefined
+    let outcome
+    other.exec('BEGIN IMMEDIATE')
+    ownerClient.on('query-error', onQueryError)
+    try {
+      const pending = fixture.kit.authentication.withCurrent(credential, ({ trx }) => {
+        runs++
+        return executeIn(trx, operation, command)
+      })
+      const waitForBusy = new Promise<never>((_, reject) => {
+        deadline = setTimeout(
+          () => reject(new Error('Account Kit did not encounter SQLITE_BUSY')),
+          3000
+        )
+      })
+      try {
+        await Promise.race([
+          observedBusy,
+          waitForBusy,
+          pending.then(() => {
+            throw new Error('Account Kit completed while the competing lock was held')
+          }),
+        ])
+      } finally {
+        other.exec('ROLLBACK')
+        await pending.catch(() => {})
+      }
+      outcome = await pending
+    } finally {
+      clearTimeout(deadline)
+      ownerClient.off('query-error', onQueryError)
+      other.close()
+    }
     assert.isFalse(outcome.replayed)
     // The Kit takes its own lock before calling run, so blocked attempts never reach run.
     assert.equal(runs, 1)
