@@ -2,6 +2,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { test } from '@japa/runner'
 import { collectExit, outputOf } from './child_process.js'
 
@@ -56,7 +57,7 @@ for (const hash of ['missing', 'failed', 'invalid', 'valid'] as const) {
     )
     await writeFile(output, '')
     await writeFile(join(root, 'stages'), '')
-    const child = spawn('/bin/bash', [releaseScript.pathname], {
+    const child = spawn('/bin/bash', [fileURLToPath(releaseScript)], {
       cwd: root,
       env: { PATH: commands, GITHUB_OUTPUT: output, GITHUB_REPOSITORY: 'example/repo' },
       stdio: ['ignore', 'pipe', 'pipe'],
