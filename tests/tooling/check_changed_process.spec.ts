@@ -255,7 +255,8 @@ cp.spawn = () => {
  return child
 }
 process.kill = () => true
-// Deliver the step timeout and its grace timer at once instead of after minutes.
+// Deliver the step timeout and advance the clock past the cleanup deadline.
+let clock = 0; Date.now = () => (clock += 6000)
 const realSetTimeout = global.setTimeout
 global.setTimeout = (callback, delay, ...rest) => realSetTimeout(callback, delay >= 5000 ? 5 : delay, ...rest)
 require('node:module').syncBuiltinESMExports()
@@ -268,8 +269,92 @@ require('node:module').syncBuiltinESMExports()
   assert.equal(result.code, 1, result.text)
   assert.match(result.text, /fail format \(exit killed\)/)
   assert.match(result.text, /stopped after 15 minutes/)
-  assert.match(result.text, /cleanup failed:.*did not close after the timeout SIGKILL/s)
+  assert.match(result.text, /cleanup failed:.*did not exit after SIGKILL/s)
   assert.match(result.text, /partial output/)
   assert.match(result.text, /LOCAL_HANDLE_RELEASED/)
   assert.equal(await readFile(f.log, 'utf8'), '')
 }).timeout(10_000)
+
+for (const groupExits of [true, false]) {
+  test(`timeout waits for group cleanup after the child closes (group exits: ${groupExits})`, async ({
+    cleanup,
+  }) => {
+    const f = await fixture(cleanup)
+    const hook = path.join(f.directory, 'timeout-close-hook.cjs')
+    await writeFile(
+      hook,
+      `
+const cp = require('node:child_process')
+const { EventEmitter } = require('node:events')
+const { PassThrough } = require('node:stream')
+const originalTimeout = global.setTimeout
+const originalInterval = global.setInterval
+const originalSpawn = cp.spawn
+const now = Date.now
+let child
+let groupProbes = 0
+let groupExitConfirmed = false
+let timeoutArmed = false
+global.setTimeout = (callback, ms, ...args) => {
+  if (ms === 900000 && !timeoutArmed) {
+    timeoutArmed = true
+    return originalTimeout(callback, 0, ...args)
+  }
+  return originalTimeout(callback, ms, ...args)
+}
+global.setInterval = (callback, ms, ...args) => ms === 40
+  ? originalInterval(() => {
+      if (!${groupExits}) Date.now = () => now() + 6000
+      try { callback() } finally { Date.now = now }
+    }, ms, ...args)
+  : originalInterval(callback, ms, ...args)
+cp.spawn = (...args) => {
+  if (child) {
+    console.log(groupExitConfirmed ? 'LATER_STEP_AFTER_GROUP_EXIT' : 'LATER_STEP_BEFORE_GROUP_EXIT')
+    return originalSpawn(...args)
+  }
+  child = new EventEmitter()
+  child.pid = 99999999
+  child.stdout = new PassThrough()
+  child.stderr = new PassThrough()
+  child.unref = () => {}
+  return child
+}
+process.kill = (_pid, signal) => {
+  if (signal === 'SIGKILL') { child.emit('close', null, 'SIGKILL'); return true }
+  if (signal === 0) {
+    groupProbes++
+    console.log('GROUP_CHECKED')
+    if (!${groupExits} || groupProbes === 1) return true
+    groupExitConfirmed = true
+    console.log('GROUP_EXIT_CONFIRMED')
+    const error = new Error('gone'); error.code = 'ESRCH'; throw error
+  }
+  throw new Error('unexpected signal: ' + signal)
+}
+require('node:module').syncBuiltinESMExports()
+`
+    )
+    f.env.NODE_OPTIONS = `--require=${hook}`
+    const child = launch(f)
+    const result = await collectExit(child, await outputOf(child))
+    assert.equal(result.code, 1, result.text)
+    assert.match(result.text, /fail format \(exit killed\)/)
+    assert.match(result.text, /GROUP_CHECKED/)
+    assert.doesNotMatch(result.text, /LATER_STEP_BEFORE_GROUP_EXIT/)
+    if (groupExits) {
+      assert.match(
+        result.text,
+        /GROUP_CHECKED[\s\S]*GROUP_EXIT_CONFIRMED[\s\S]*LATER_STEP_AFTER_GROUP_EXIT/
+      )
+      assert.match(result.text, /pass lint/)
+    } else {
+      assert.match(
+        result.text,
+        /cleanup failed: The owned process group did not exit after SIGKILL/
+      )
+      assert.doesNotMatch(result.text, /LATER_STEP_AFTER_GROUP_EXIT/)
+      assert.equal(await readFile(f.log, 'utf8'), '')
+    }
+  }).timeout(10_000)
+}
