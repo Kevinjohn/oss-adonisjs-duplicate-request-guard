@@ -1,7 +1,7 @@
 {
   "name": "@kevinjohn/adonisjs-duplicate-request-guard",
   "description": "Run a repeated request once and return its first result, inside your Lucid transaction (AdonisJS 7)",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "engines": {
     "node": ">=24.0.0"
   },
