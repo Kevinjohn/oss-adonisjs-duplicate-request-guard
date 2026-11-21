@@ -68,7 +68,7 @@ export interface KitFixture {
 }
 
 /**
- * A real AdonisJS app with Lucid, the limiter and Account Kit 0.4.1, after `node ace configure`
+ * A real AdonisJS app with Lucid, the limiter and Account Kit 0.4.2, after `node ace configure`
  * for the Kit and for this package, with all migrations run.
  */
 export async function bootKit(

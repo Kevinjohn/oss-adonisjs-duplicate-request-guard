@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Test against Account Kit 0.4.2.
+
 ## 0.1.2 - 2026-11-20
 
 - Document a transactional note insert and its replay using the API starter. Explain when to
