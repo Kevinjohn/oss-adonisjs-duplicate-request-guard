@@ -12,7 +12,7 @@ As an application operator, I want to prune completed receipts only after client
 ## Acceptance criteria
 
 - `olderThan` is a required JavaScript `Date` supplied by the host. No retention default exists; choose it based on the maximum client retry horizon.
-- Only completed receipts with `updated_at` strictly earlier than `olderThan.toISOString()` are deleted. Pending and equal-cutoff rows remain.
+- Only completed receipts last updated strictly before the cutoff are deleted; retention counts from completion rather than reservation. For a UTC year above 9999, all completed receipts qualify. A cutoff before year zero removes none. See the [cutoff boundary tests](../tests/identity.spec.ts#L223). Pending and equal-cutoff rows remain.
 - The method returns the deleted-row count. A later call using a deleted identity executes fresh and can apply the operation again.
 - Supported-connection checks apply before deletion; database and invalid date failures propagate. Host owns scheduling and any surrounding transaction.
 
@@ -34,10 +34,16 @@ Scope: public pruning API through Lucid deletion; retention policy and schedulin
 ```mermaid
 flowchart TD
     A["pruneReceipts(client, options)"] --> B["assertSupportedConnection(client)"]
+    B -->|Unsupported| X["Propagate error before delete"]
     B --> C["options.olderThan.toISOString()"]
-    C --> D["Filter state completed and updated_at before cutoff"]
+    C -->|Invalid Date| X
+    C --> V{"Cutoff begins with +?"}
+    V -->|Yes| P["Filter completed rows only"]
+    V -->|No| D["Filter completed rows with updated_at strictly before cutoff"]
+    P --> E
     D --> E["Lucid delete query"]
-    E --> F["Return Number of affected rows or propagate error"]
+    E -->|Success| F["Return Number of affected rows"]
+    E -->|Error| X
 ```
 
 **Code references:** [pruneReceipts](../src/receipts.ts#L654), [PruneOptions](../src/types.ts#L77), [pruning tests](../tests/prune.spec.ts).
