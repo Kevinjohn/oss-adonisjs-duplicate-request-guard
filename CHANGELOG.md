@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.3 - 2026-11-21
+
 - Test against Account Kit 0.4.2.
 
 ## 0.1.2 - 2026-11-20
