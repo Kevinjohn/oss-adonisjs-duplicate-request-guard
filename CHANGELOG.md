@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.2 - 2026-11-20
+
+- Document a transactional note insert and its replay using the API starter. Explain when to
+  authorize replay separately, when to consume single-use authorization, and how to handle external
+  effects such as email and webhooks.
+
 ## 0.1.1 - 2026-11-19
 
 - Fixed: after SQLite ended a host transaction (`INSERT OR ROLLBACK`, a busy abort), a later

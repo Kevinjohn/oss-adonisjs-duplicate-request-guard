@@ -12,7 +12,7 @@ retry runs fresh.
 ## Install
 
 ```sh
-pnpm add https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/releases/download/v0.1.1/kevinjohn-adonisjs-duplicate-request-guard-0.1.1.tgz
+pnpm add https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/releases/download/v0.1.2/kevinjohn-adonisjs-duplicate-request-guard-0.1.2.tgz
 node ace configure @kevinjohn/adonisjs-duplicate-request-guard   # publishes the receipts migration once
 node ace migration:run
 ```
@@ -31,62 +31,55 @@ See the [user story catalogue](https://github.com/Kevinjohn/oss-adonisjs-duplica
 
 ## Use
 
+The guard protects database writes made through the operation's transaction. If an email or
+webhook must survive retries, record it in the same transaction and let a separate delivery
+process send it.
+
 ```ts
 import db from '@adonisjs/lucid/services/db'
 import { execute, type Operation } from '@kevinjohn/adonisjs-duplicate-request-guard'
 
-const addNote: Operation<{ body: string }, { proofToken: string }, { noteId: number }> = {
-  name: 'notes.add',
-  authorizeAccess: async ({ trx, actorId, scopeId }) => {
-    /* throw to deny; runs first */
+const createNote: Operation<{ body: string }, undefined, { noteId: number }> = {
+  name: 'notes.create',
+  authorizeAccess: async ({ trx, actorId }) => {
+    const user = await trx.from('users').where('id', actorId).first()
+    if (!user) throw new Error('User no longer exists')
   },
-  authorizeReplay: async ({ trx, actorId }, result) => {
-    /* runs on every replay */
+  work: async ({ trx, actorId, payload }) => {
+    const [noteId] = await trx.table('notes').insert({ user_id: actorId, body: payload.body })
+    return { noteId }
   },
-  parseAuthorization: (raw) => {
-    // Validate the opaque input and return the typed authorization; fresh reservations only.
-    const proofToken = (raw as { proofToken?: unknown } | null | undefined)?.proofToken
-    if (typeof proofToken !== 'string') throw new Error('proof token required')
-    return { proofToken }
-  },
-  authorizeExecute: async ({ trx }, auth) => {
-    /* e.g. consume a proof */
-  },
-  work: async ({ trx, payload }) => ({ noteId: 1 }),
 }
 
-// In a controller. actorId and scopeId come from your own authentication and authorization,
-// never from the request body; commandId and requestKey are the client's retry identifiers.
-// Pass the client's authorization through untouched.
-return execute(db.connection(), addNote, {
+// In an authenticated controller, derive actorId from the signed-in user and validate the
+// request data. The client supplies the same commandId and requestKey on each retry.
+return execute(db.connection(), createNote, {
   actorId,
-  scopeId,
-  payload: body.payload,
+  scopeId: actorId,
+  payload: { body },
   command: { commandId, requestKey },
-  authorization: body.authorization,
 })
 ```
 
-Order: `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh: `parseAuthorization` →
-`authorizeExecute` → `work` → complete. Completion updates only a `pending` row and requires
-exactly one.
+The first call inserts one row and returns its ID with `replayed: false`. A retry with the same
+identity, scope and payload returns that ID with `replayed: true`. The note is still stored once.
+The [API starter](https://github.com/Kevinjohn/oss-adonisjs-starter-examples/blob/v0.15.1/apps/api/app/controllers/notes_controller.ts)
+and its [functional test](https://github.com/Kevinjohn/oss-adonisjs-starter-examples/blob/v0.15.1/apps/api/tests/functional/notes.spec.ts)
+show the full request and check the stored rows.
 
-For commands without authorization, only `name`, `authorizeAccess` and `work` are required.
-Omitted `authorizeReplay` and `authorizeExecute` allow the corresponding path. An omitted
-`parseAuthorization` ignores the opaque input and passes `undefined` to `authorizeExecute` and
-`work`; use `undefined` for the operation authorization type when no parser is needed. If that type
-excludes `undefined`, the parser is required so callbacks receive the authorization their type
-promises. Supplied policies keep the order above and throw to refuse the command.
+`authorizeAccess` runs on both calls. For this minimal receipt it suffices because the note ID
+belongs to the same authenticated account. If a receipt contains a project result that is only
+visible while the caller retains a particular project role, use `authorizeReplay` to check that
+role against the stored result before returning it.
 
-```ts
-const addPlainNote: Operation<{ body: string }, undefined, { noteId: number }> = {
-  name: 'notes.addPlain',
-  authorizeAccess: async ({ trx, actorId, scopeId }) => {
-    /* require current membership */
-  },
-  work: async ({ trx, payload }) => ({ noteId: 1 }),
-}
-```
+For a protected command, pass the client's authorization through untouched. Put single-use
+proof parsing in `parseAuthorization` and proof consumption in `authorizeExecute`, before the
+write and inside the same transaction. Neither runs on replay. If `parseAuthorization` is
+omitted, its authorization type must admit `undefined`; the authorization input is then ignored.
+Both `authorizeReplay` and `authorizeExecute` are optional and throw to refuse their path.
+
+The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh: `parseAuthorization`
+→ `authorizeExecute` → `work` → complete. Completion updates exactly one pending row.
 
 ## Contracts
 
