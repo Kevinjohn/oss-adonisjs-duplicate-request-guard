@@ -12,7 +12,7 @@ As an application operator, I want to prune completed receipts only after client
 ## Acceptance criteria
 
 - `olderThan` is a required JavaScript `Date` supplied by the host. No retention default exists; choose it based on the maximum client retry horizon.
-- Only completed receipts with `updated_at` strictly earlier than `olderThan.toISOString()` are deleted. Pending and equal-cutoff rows remain.
+- Only completed receipts last updated strictly before the cutoff are deleted. For a UTC year above 9999, all completed receipts qualify. A cutoff before year zero removes none. See the [cutoff boundary tests](../tests/identity.spec.ts#L240). Pending and equal-cutoff rows remain.
 - The method returns the deleted-row count. A later call using a deleted identity executes fresh and can apply the operation again.
 - Supported-connection checks apply before deletion; database and invalid date failures propagate. Host owns scheduling and any surrounding transaction.
 
@@ -35,7 +35,7 @@ Scope: public pruning API through Lucid deletion; retention policy and schedulin
 flowchart TD
     A["pruneReceipts(client, options)"] --> B["assertSupportedConnection(client)"]
     B --> C["options.olderThan.toISOString()"]
-    C --> D["Filter state completed and updated_at before cutoff"]
+    C --> D["Select completed rows older than cutoff, including all for a year above 9999"]
     D --> E["Lucid delete query"]
     E --> F["Return Number of affected rows or propagate error"]
 ```

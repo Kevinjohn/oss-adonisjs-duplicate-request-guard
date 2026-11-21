@@ -12,6 +12,7 @@ As an application operator, I want to configure the receipt table and a supporte
 ## Acceptance criteria
 
 - Configure publishes the receipts migration once; an existing filename with `_create_request_receipts_table.ts` suffix is left unchanged. A matching entry that is a directory or a link that does not resolve to a regular file stops configure with an error naming it, before anything is published; remove or replace it and rerun.
+- A symbolic link resolving to a regular migration file also counts as installed for publication purposes. Lucid must still apply the migration to create storage; its down migration drops the receipts table and its replay history.
 - A missing migrations directory counts as no existing migration and the migration is published. Any other read failure of the migrations directory (for example permissions, or a file in its place) stops configure with that error before anything is published; fix the directory and rerun.
 - Configure takes an exclusive publication claim before checking for an existing migration. A simultaneous run fails with a rerun diagnostic; once publication finishes, a rerun preserves the migration. A failed publication releases the claim. The operator may remove a stale empty lock directory only after confirming no configure is still running.
 - The migration creates `request_receipts` with unique operation/command-ID and operation/request-key indexes. An outdated cross-actor unique index can produce `E_RECEIPT_SCHEMA`; the host must use the current schema.

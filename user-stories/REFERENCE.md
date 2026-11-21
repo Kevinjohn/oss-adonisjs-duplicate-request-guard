@@ -16,6 +16,8 @@
 - Detailed contracts and host integration examples: [README](../README.md). There is no user-facing guide or built-in route.
 - Test evidence: [`tests/execute.spec.ts`](../tests/execute.spec.ts), [`tests/rollback.spec.ts`](../tests/rollback.spec.ts), [`tests/nesting.spec.ts`](../tests/nesting.spec.ts), [`tests/connections.spec.ts`](../tests/connections.spec.ts), [`tests/prune.spec.ts`](../tests/prune.spec.ts).
 
+For retry decisions distinguish an [identity conflict](../tests/identity.spec.ts) or [invalid JSON value](../tests/values.spec.ts), [transaction ownership and pending receipts](../tests/owners.spec.ts), and [transaction loss](../tests/lost_transaction.spec.ts). The [exception definitions](../src/errors.ts) supply the named constructors and their `E_*` aliases.
+
 ## Availability
 
 `Current` describes callable source under the stated Lucid/better-sqlite3 and transaction conditions, not runtime verification. The package does not expose UI controls. A receipt is scoped by operation name and actor; the paired command ID/request key and payload/scope identity must match for replay.

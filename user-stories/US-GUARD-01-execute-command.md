@@ -24,6 +24,8 @@ As an operation caller, I want to submit an operation with a stable identity so 
 - Matching completed identity returns the stored JSON-equal result with `replayed: true`; mismatched key/command/payload conflicts, re-entering the same pending operation from `work` or `authorizeExecute` (both run after the pending insert) reports in-progress, and any fresh-path failure rolls back receipt and writes.
 - Non-JSON values (including cycles, dates, non-finite numbers, symbols and class instances) are refused; `-0` replays as `0`.
 
+- Preserve both command identifiers on retries. Property order does not change the payload hash, while a changed scope or JSON value conflicts within the same operation and actor. Keep the payload unchanged until the call settles. Invalid input raises `E_INVALID_COMMAND_VALUE`; an invalid work result raises `E_INVALID_COMMAND_RESULT` and rolls back the work. See [identity cases](../tests/identity.spec.ts) and [JSON value cases](../tests/values.spec.ts).
+
 ## User flow
 
 ```mermaid

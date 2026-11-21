@@ -11,6 +11,7 @@ Scope: the current public exports and operation contract, fresh execution and re
 | [US-GUARD-03](US-GUARD-03-authorize-replay.md)    | Reauthorize access before replaying a result       | Current  |
 | [US-GUARD-04](US-GUARD-04-operate-receipts.md)    | Install receipt storage                            | Operator |
 | [US-GUARD-05](US-GUARD-05-prune-receipts.md)      | Remove completed receipts past the retry horizon   | Operator |
+| [US-GUARD-06](US-GUARD-06-recover-transaction.md) | Recover after the transaction ends unexpectedly    | Current  |
 
 ## Files
 
