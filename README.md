@@ -31,6 +31,11 @@ contents are unchanged.
 Peers: `@adonisjs/core` ^7.0.0, `@adonisjs/lucid` ^22.0.0. Node >= 24. Each release lists its
 archive's SHA-256.
 
+The configure hook uses Core's `makeUsingStub`, not an Assembler code transformer, so this package
+does not declare an Assembler peer. Clean packed-candidate consumers have configured twice,
+run the migration and replayed a v0.1.3 receipt without Assembler on Core 7.0.0/Lucid 22.0.0
+and Core 7.6.0/Lucid 22.4.2.
+
 ## User stories
 
 See the [user story catalogue](https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/blob/main/user-stories/README.md) for operation behaviour, transaction boundaries, replay authorisation and receipt storage.
