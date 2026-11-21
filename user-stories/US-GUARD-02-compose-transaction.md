@@ -12,9 +12,9 @@ As a transaction owner, I want a deduplicated operation to share my transaction 
 ## Acceptance criteria
 
 - Inputs: `trx` (required; must be a transaction client on a supported connection), `operation` (an `Operation`), and `input` (`ExecuteInput`: `actorId`, `scopeId`, `payload`, `command`, optional `authorization`). Returns `Promise<Outcome<Result>>`, that is `{ replayed, result }`.
-- `execute` rejects transaction clients; `executeIn` rejects non-transaction clients.
+- `execute` rejects transaction clients; `executeIn` rejects non-transaction clients (`E_TRANSACTION_OWNER`). Calling `execute` with a base connection inside another transaction is not detected as such and can instead time out acquiring the only pooled connection.
 - Each operation uses a savepoint on the caller transaction; nested `executeIn` is supported from the innermost operation authorisation callbacks/work.
-- Sibling calls and calls with lost async context fail immediately with `E_CONCURRENT_COMMAND`. A late nested call from a closing frame, or a parent finishing with an open nested operation, fails with `E_UNAWAITED_NESTED_COMMAND`. Parent unwinding aborts and waits for children before rollback; a child that never settles keeps the parent waiting.
+- Sibling calls, calls with lost async context and calls from a parent that has already returned fail immediately with `E_CONCURRENT_COMMAND`. A late nested call from a still-innermost closing or aborted frame, or a parent finishing with an open nested operation, fails with `E_UNAWAITED_NESTED_COMMAND`. Parent unwinding aborts and waits for children before rollback; a child that never settles keeps the parent waiting.
 - Policies and `work` must be database-only and safe to rerun if the transaction owner reruns its callback. Do not wrap either API in an independent retry loop.
 - Original SQLite transaction-abort errors propagate; failed savepoint cleanup is attached as `cause` when possible.
 - Host queries issued on `trx` while an operation is open are inside its savepoint and roll back if that operation fails.
@@ -27,9 +27,13 @@ As a transaction owner, I want a deduplicated operation to share my transaction 
 flowchart TD
     A["Host begins account or application transaction"] --> B["Host awaits executeIn"]
     B --> C{"Operation succeeds?"}
-    C -->|No| D["Operation changes roll back to savepoint"]
-    C -->|Yes| E["Host continues and commits outer transaction"]
-    E --> F["Receipt and host changes commit together"]
+    C -->|No| D["Operation fails; roll back opened savepoint if possible"]
+    D --> G{"Outer transaction still usable?"}
+    G -->|No| H["End lost transaction; see US-GUARD-06"]
+    G -->|Yes| E{"Host continues and commits?"}
+    C -->|Yes| E
+    E -->|Yes| F["Remaining receipt and host changes commit together"]
+    E -->|No| I["Outer rollback discards provisional changes"]
 ```
 
 ## Code flow
@@ -38,13 +42,19 @@ Scope: package operation path; caller authentication, HTTP response shaping, and
 
 ```mermaid
 flowchart TD
-    A["executeIn(trx, operation, input)"] --> B["require transaction and supported connection"]
+    A["executeIn(trx, operation, input)"] --> B["executeInTransaction requires transaction and supported connection"]
+    B -->|Invalid owner or connection| X["Reject before claiming frame"]
     B --> C["claim frame synchronously"]
-    C --> D["SAVEPOINT; reserve and execute/replay"]
+    C --> V["Capture input; bind live driver; no-op UPDATE; validate identity and payload"]
+    V -->|Error before savepoint| Z["Propagate; release frame"]
+    V --> D["SAVEPOINT; authorizeAccess; reserve and execute/replay"]
+    D -->|SAVEPOINT creation fails| Z
     D --> E{"Children settled and operation done?"}
-    E -->|Yes| F["RELEASE SAVEPOINT; caller decides outer commit"]
-    E -->|Failure/unwind| G["abort/wait children; rollback to savepoint"]
-    C -->|Sibling/late child| H["concurrency or unawaited error immediately"]
+    E -->|Yes| F["RELEASE SAVEPOINT; release frame; return provisional result"]
+    F -->|Release fails| G
+    E -->|Failure/unwind| G["abortChildren; wait; attempt rollback and release savepoint"]
+    G --> Z
+    C -->|Sibling, lost context or late child| H["Concurrency or unawaited error immediately"]
 ```
 
 **Code references:** [executeIn](../src/receipts.ts#L416), [savepoint and nested execution](../src/receipts.ts#L469), [Operation](../src/types.ts#L38), [ExecuteInput](../src/types.ts#L53)

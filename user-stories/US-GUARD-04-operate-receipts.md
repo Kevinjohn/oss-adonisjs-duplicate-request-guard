@@ -16,7 +16,7 @@ As an application operator, I want to configure the receipt table and a supporte
 - A missing migrations directory counts as no existing migration and the migration is published. Any other read failure of the migrations directory (for example permissions, or a file in its place) stops configure with that error before anything is published; fix the directory and rerun.
 - Configure takes an exclusive publication claim before checking for an existing migration. A simultaneous run fails with a rerun diagnostic; once publication finishes, a rerun preserves the migration. A failed publication releases the claim. The operator may remove a stale empty lock directory only after confirming no configure is still running.
 - The migration creates `request_receipts` with unique operation/command-ID and operation/request-key indexes. An outdated cross-actor unique index can produce `E_RECEIPT_SCHEMA`; the host must use the current schema.
-- Public operations require better-sqlite3 and pool maximum one. A competing open Lucid connection is refused when another still-open connection to the same resolved database file was already registered by deduplicated operations; closed owners are pruned. Unregistered external writers are not detected. Each in-memory connection is independent.
+- Public operations require better-sqlite3 and pool maximum one (the default). A competing open Lucid connection is refused when another still-open connection to the same resolved database file was registered by an operation or `assertSupportedConnection`; closed owners are pruned. Unregistered external writers, hard-linked paths and `file:` URI filenames are not detected. Each in-memory or blank-filename connection is independent.
 - The package provides APIs and a migration hook, without mounting HTTP routes or a scheduled cleanup job.
 
 ## User flow
@@ -36,6 +36,8 @@ flowchart TD
     Y --> B
     C -->|Yes| D["Existing file remains unchanged"]
     C -->|No| E["Publish receipt migration"]
+    E -->|Publication fails| P["Claim released; correct error and rerun"]
+    P --> B
     D --> M["Host runs Lucid migrations"]
     E --> M
     M --> F["Host invokes deduplicated operations"]
@@ -62,11 +64,14 @@ flowchart TD
     C -->|Yes| D["Log skip and return from configure"]
     D --> T["Release publication claim"]
     C -->|No| E["codemods.makeUsingStub publishes migration"]
-    E --> T
+    E -->|Success| T
+    E -->|Throws| P["finally removes claim; propagate error"]
+    C -->|Directory inspection fails| P
     T --> F["Host runs Lucid migration; existing file does not prove application"]
     G["execute, executeIn or pruneReceipts"] --> H["assertSupportedConnection"]
     H --> I["Validate dialect, pool and resolved-file ownership"]
-    I --> J["Continue or throw before operation query"]
+    I -->|Valid| J["Continue to operation"]
+    I -->|Invalid| Q["E_UNSUPPORTED_DIALECT or E_UNSAFE_SQLITE_POOL"]
 ```
 
 **Code references:** [Configure hook](../configure.ts), [migration](../stubs/migrations/create_request_receipts_table.stub), [connection check](../src/receipts.ts#L140).
