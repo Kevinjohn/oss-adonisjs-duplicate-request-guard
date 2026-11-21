@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-11-21
+
+- Test against Account Kit 0.5.0.
+- Document and verify the package user stories and implementation flows.
+
 ## 0.1.3 - 2026-11-21
 
 - Test against Account Kit 0.4.2.
