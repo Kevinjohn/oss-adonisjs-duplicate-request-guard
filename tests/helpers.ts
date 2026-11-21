@@ -156,7 +156,10 @@ export async function addProof(client: QueryClientContract, token: string, userI
   await client.table('proofs').insert({ token, user_id: userId })
 }
 
-export const makeCommandInput = (sequenceNumber: number, extra: Record<string, unknown> = {}) => ({
+export const makeOperationInput = (
+  sequenceNumber: number,
+  extra: Record<string, unknown> = {}
+) => ({
   actorId: 'alice',
   scopeId: 's1',
   payload: { body: `note ${sequenceNumber}` },
@@ -200,8 +203,8 @@ export function makeNamedOperation(name: string) {
   return { ...op, operation: { ...op.operation, name } }
 }
 
-export const makeAuthorizedCommandInput = (sequenceNumber: number) => ({
-  ...makeCommandInput(sequenceNumber),
+export const makeAuthorizedOperationInput = (sequenceNumber: number) => ({
+  ...makeOperationInput(sequenceNumber),
   authorization: { proofToken: `p${sequenceNumber}` },
 })
 export const sleep = (delayMs: number) =>

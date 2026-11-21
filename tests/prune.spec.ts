@@ -5,7 +5,7 @@ import {
   addProof,
   countRows,
   createDatabase,
-  makeCommandInput,
+  makeOperationInput,
   makeNoteOperation,
   listReceipts,
 } from './helpers.js'
@@ -20,7 +20,7 @@ const runAll = (client: Client, operation: Operation) =>
   Promise.all(
     Array.from({ length: N }, (_, i) =>
       execute(client, operation, {
-        ...makeCommandInput(i + 1),
+        ...makeOperationInput(i + 1),
         authorization: { proofToken: `p${i + 1}` },
       })
     )
@@ -34,11 +34,11 @@ test.group('pruneReceipts', () => {
     await addProof(client, 'p2')
     await addProof(client, 'p3')
     await execute(client, operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     await execute(client, operation, {
-      ...makeCommandInput(2),
+      ...makeOperationInput(2),
       authorization: { proofToken: 'p2' },
     })
     await client
@@ -66,7 +66,7 @@ test.group('pruneReceipts', () => {
     )
     // A pruned identity is fresh again.
     const rerun = await execute(client, operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'p3' },
     })
     assert.isFalse(rerun.replayed)

@@ -169,15 +169,27 @@ export class UnsafeSqlitePoolException extends Exception {
   }
 }
 
+/** Alias of the same exception constructor; codes, status and messages remain stable. */
 export const E_DUPLICATE_REQUEST_CONFLICT = DuplicateRequestConflictException
+/** Alias for the HTTP 409 exception when the operation already has a pending receipt. */
 export const E_DUPLICATE_REQUEST_IN_PROGRESS = DuplicateRequestInProgressException
+/** Alias for the HTTP 400 exception for invalid operation identity or value. */
 export const E_INVALID_COMMAND_VALUE = InvalidCommandValueException
+/** Alias for the HTTP 500 exception for invalid operation result. */
 export const E_INVALID_COMMAND_RESULT = InvalidCommandResultException
+/** Alias for the unsupported database dialect exception. */
 export const E_UNSUPPORTED_DIALECT = UnsupportedDialectException
+/** Alias for the receipt completion exception. */
 export const E_RECEIPT_NOT_PENDING = ReceiptNotPendingException
+/** Alias for the incompatible receipt schema exception. */
 export const E_RECEIPT_SCHEMA = ReceiptSchemaException
+/** Alias for the concurrent operations on one transaction exception. */
 export const E_CONCURRENT_COMMAND = ConcurrentCommandException
+/** Alias for the unawaited nested operation exception. */
 export const E_UNAWAITED_NESTED_COMMAND = UnawaitedNestedCommandException
+/** Alias for the lost transaction exception. */
 export const E_TRANSACTION_LOST = TransactionLostException
+/** Alias for the incorrect transaction owner exception. */
 export const E_TRANSACTION_OWNER = TransactionOwnerException
+/** Alias for the unsafe SQLite pool exception. */
 export const E_UNSAFE_SQLITE_POOL = UnsafeSqlitePoolException

@@ -108,7 +108,7 @@ interface LucidConnection {
 }
 
 /**
- * Real path of a SQLite file → the open Lucid connections that ran commands against it. Exported
+ * Real path of a SQLite file → the open Lucid connections that ran operations against it. Exported
  * for tests only; not re-exported from the package entry.
  */
 export const writersByDatabasePath = new Map<string, Set<LucidConnection>>()
@@ -201,24 +201,25 @@ export async function completeReceipt(
   if (updatedRowCount !== 1) throw new ReceiptNotPendingException(commandId, updatedRowCount)
 }
 
-/** An open command on a transaction. Its savepoint is on top of the trx's savepoint stack. */
+/** An open operation on a transaction. Its savepoint is on top of the trx's savepoint stack. */
 interface Frame {
   trx: TransactionClientContract
-  /** Set when the enclosing command started unwinding while this one was still open. */
+  /** Set when the enclosing operation started unwinding while this one was still open. */
   aborted: boolean
-  /** Set once the command completes, replays or unwinds: from then on it accepts no new child. */
+  /** Set once the operation completes, replays or unwinds: from then on it accepts no new child. */
   closing: boolean
-  /** Every nested command started under this one, so it can wait for them before rolling back. */
-  children: Frame[]
-  /** The trx's driver connection, known from the command's first checkpoint on. */
+  /** Only active nested operations, so a parent can wait for them before rolling back. */
+  children: Set<Frame>
+  parent?: Frame
+  /** The trx's driver connection, known from the operation's first checkpoint on. */
   connection?: DriverConnection
-  /** This command's run, settled before its parent may roll back. */
+  /** This operation's run, settled before its parent may roll back. */
   run?: Promise<unknown>
 }
 
-/** The current command, carried through its policies and `work` by AsyncLocalStorage. */
+/** The current operation, carried through its authorisation callbacks and `work` by AsyncLocalStorage. */
 const commandFrame = new AsyncLocalStorage<Frame>()
-/** Open commands per transaction, outermost first. */
+/** Open operations per transaction, outermost first. */
 const openFramesByTransaction = new WeakMap<TransactionClientContract, Frame[]>()
 
 /** The driver connection a transaction is bound to: better-sqlite3's Database. */
@@ -295,8 +296,8 @@ function acquireBoundDriverConnection(trx: TransactionClientContract) {
 }
 
 /**
- * Binds the command to its connection and asks better-sqlite3 whether a transaction is still open
- * on it: a host query may have ended it before this command started. Anything but a confirmed open
+ * Binds the operation to its connection and asks better-sqlite3 whether a transaction is still open
+ * on it: a host query may have ended it before this operation started. Anything but a confirmed open
  * transaction is treated as lost.
  */
 async function bindAndAssertOpenTransaction(frame: Frame) {
@@ -311,16 +312,16 @@ async function bindAndAssertOpenTransaction(frame: Frame) {
 }
 
 /**
- * Test-only seams, not exported from the package entry: `onClosing` runs when a command starts to
- * complete or replay, `onUnwind` once an unwinding command has taken its list of children.
+ * Test-only seams, not exported from the package entry: `onClosing` runs when an operation starts to
+ * complete or replay, `onUnwind` once an unwinding operation has taken its list of children.
  */
 export const internalHooks: { onClosing?: () => void; onUnwind?: () => void } = {}
 
 /**
  * Claims the transaction synchronously, before the first await. Savepoints on one connection are a
- * stack, so a command may start only when none is open on this trx, or when the innermost open
- * command is the caller itself (a nested call from its policies or `work`). Anything else (a
- * sibling, a call that lost its async context, a call from a command that already returned) is
+ * stack, so an operation may start only when none is open on this trx, or when the innermost open
+ * operation is the caller itself (a nested call from its authorisation callbacks or `work`). Anything else (a
+ * sibling, a call that lost its async context, a call from an operation that already returned) is
  * refused at once rather than queued, so it can neither corrupt the stack nor wait forever.
  */
 function claimCommandFrame(trx: TransactionClientContract): Frame {
@@ -331,10 +332,16 @@ function claimCommandFrame(trx: TransactionClientContract): Frame {
     throw new ConcurrentCommandException()
   }
   // A child that arrives after its parent stopped waiting for children would outlive it; one from an
-  // aborted command would run work that is about to be rolled back.
+  // aborted operation would run work that is about to be rolled back.
   if (innermost?.closing || innermost?.aborted) throw new UnawaitedNestedCommandException()
-  const frame: Frame = { trx, aborted: false, closing: false, children: [] }
-  innermost?.children.push(frame)
+  const frame: Frame = {
+    trx,
+    aborted: false,
+    closing: false,
+    children: new Set(),
+    parent: innermost,
+  }
+  innermost?.children.add(frame)
   stack.push(frame)
   openFramesByTransaction.set(trx, stack)
   return frame
@@ -346,23 +353,25 @@ function releaseCommandFrame(frame: Frame) {
   const stack = openFramesByTransaction.get(frame.trx) as Frame[]
   const index = stack.indexOf(frame)
   if (index !== -1) stack.splice(index, 1)
+  frame.parent?.children.delete(frame)
+  frame.parent = undefined
 }
 
-/** The nested commands started under this one that are still open. */
+/** The nested operations started under this one that are still open. */
 function listOpenChildFrames(frame: Frame) {
-  return frame.children.filter((child) => openFramesByTransaction.get(frame.trx)?.includes(child))
+  return [...frame.children]
 }
 
-/** Marks the command and every open command nested under it aborted. */
+/** Marks the operation and every open operation nested under it aborted. */
 function markFrameAborted(frame: Frame) {
   frame.aborted = true
   for (const child of listOpenChildFrames(frame)) markFrameAborted(child)
 }
 
 /**
- * Before a command rolls back: marks every nested command still open, at any depth, as aborted, so
+ * Before an operation rolls back: marks every nested operation still open, at any depth, as aborted, so
  * each stops at its next checkpoint, then waits for its direct children to settle (each waits for
- * its own). Until then this command's savepoint stays open, so anything a nested command wrote,
+ * its own). Until then this operation's savepoint stays open, so anything a nested operation wrote,
  * before or after the abort, is inside it and the rollback removes it. Returns the aborted direct
  * children's errors.
  */
@@ -370,17 +379,13 @@ async function abortChildren(frame: Frame) {
   const openChildFrames = listOpenChildFrames(frame)
   for (const child of openChildFrames) markFrameAborted(child)
   internalHooks.onUnwind?.()
-  const childRunResults = await Promise.allSettled(frame.children.map((child) => child.run))
-  return childRunResults.flatMap((result, index) =>
-    result.status === 'rejected' && openChildFrames.includes(frame.children[index])
-      ? [result.reason]
-      : []
-  )
+  const childRunResults = await Promise.allSettled(openChildFrames.map((child) => child.run))
+  return childRunResults.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []))
 }
 
 /**
- * Checked before each of the command's own statements and before each policy and `work`: an
- * aborted command stops at its next checkpoint and rolls back, and so does every command on a
+ * Checked before each of the operation's own statements and before each authorisation callback and `work`: an
+ * aborted operation stops at its next checkpoint and rolls back, and so does every operation on a
  * connection whose transaction SQLite already ended. User code already running can still
  * write, but its parent waits for it, so those writes stay inside the parent's open savepoint.
  */
@@ -392,8 +397,8 @@ function assertLive(frame: Frame) {
 }
 
 /**
- * Checked before RELEASE: a command whose nested command is still open fails instead, and its
- * rollback takes the nested command's work too.
+ * Checked before RELEASE: an operation whose nested operation is still open fails instead, and its
+ * rollback takes the nested operation's work too.
  */
 function assertSettled(frame: Frame) {
   assertLive(frame)
@@ -402,13 +407,26 @@ function assertSettled(frame: Frame) {
 }
 
 /**
- * Runs one command inside a transaction the host owns (for example Account Kit `withCurrent`).
+ * Runs one operation inside a transaction the host owns (for example Account Kit `withCurrent`).
  * Order: authorizeAccess, reserve, then either authorizeReplay (replay) or parseAuthorization,
  * authorizeExecute, work, complete (fresh). Everything after validation runs under a savepoint, so
  * a failure rolls back the pending row and the work even if the host swallows it and commits.
  * Await it before issuing any other query on `trx`.
  */
-export async function executeIn<Payload, Authorization, Result>(
+export function executeIn<Payload, Authorization, Result>(
+  trx: TransactionClientContract,
+  operation: Operation<Payload, Authorization, Result>,
+  input: ExecuteInput<Payload>
+): Promise<Outcome<Result>> {
+  const nested = commandFrame.getStore()?.trx === trx
+  const run = executeInTransaction(trx, operation, input)
+  // A parent already waits for and reports failure of an outstanding nested operation.
+  // Observe the actual returned promise without changing the rejection callers await.
+  if (nested) void run.catch(() => {})
+  return run
+}
+
+async function executeInTransaction<Payload, Authorization, Result>(
   trx: TransactionClientContract,
   operation: Operation<Payload, Authorization, Result>,
   input: ExecuteInput<Payload>
@@ -436,7 +454,7 @@ export async function executeIn<Payload, Authorization, Result>(
     frame.run = commandFrame
       .run(frame, () => runClaimed(trx, frame, operation, admitted))
       .catch((error: unknown) => {
-        // An enclosing command rolled back over this one: report that, not the knock-on failure.
+        // An enclosing operation rolled back over this one: report that, not the knock-on failure.
         if (frame.aborted && !(error instanceof UnawaitedNestedCommandException)) {
           throw new UnawaitedNestedCommandException({ cause: error })
         }
@@ -459,7 +477,7 @@ async function runClaimed<Payload, Authorization, Result>(
   assertLive(frame)
   await bindAndAssertOpenTransaction(frame)
   await trx.rawQuery(`UPDATE ${RECEIPTS_TABLE} SET id = id WHERE 0`)
-  // Validate before any policy runs: a payload that cannot be hashed faithfully is the client's error.
+  // Validate before any authorisation callback runs: a payload that cannot be hashed faithfully is the client's error.
   const payloadHash = createHash('sha256')
     .update(
       serializeCanonicalJson({ scopeId: input.scopeId, payload: input.payload }, refusePayload)
@@ -489,7 +507,7 @@ async function runClaimed<Payload, Authorization, Result>(
   } catch (error) {
     // Before any await: from here on a new child would not be waited for, so claim() refuses it.
     frame.closing = true
-    // Nested commands settle first: the rollback below then takes everything they wrote.
+    // Nested operations settle first: the rollback below then takes everything they wrote.
     const [firstChildError] = await abortChildren(frame)
     if (firstChildError !== undefined) attachCause(error, firstChildError)
     await rollBack(trx, savepoint, error)
@@ -501,7 +519,7 @@ async function runClaimed<Payload, Authorization, Result>(
  * Rolls the savepoint back. When SQLite already rolled back the whole transaction (INSERT OR
  * ROLLBACK, a busy abort), the savepoint is gone; the original error must still surface, because
  * retriers such as Account Kit test its code. The cleanup error becomes its `cause` if it has none.
- * The failed cleanup statement is itself what the connection's watcher sees, so later commands on
+ * The failed cleanup statement is itself what the connection's watcher sees, so later operations on
  * the connection are refused.
  */
 async function rollBack(trx: TransactionClientContract, savepoint: string, error: unknown) {
@@ -585,7 +603,7 @@ async function reserveAndRun<Payload, Authorization, Result>(
     }
     if (row.state !== 'completed') throw new DuplicateRequestInProgressException()
     assertLive(frame)
-    // The policy gets its own copy: whatever it does to it, the caller receives the stored result.
+    // The authorisation callback gets its own copy: whatever it does to it, the caller receives the stored result.
     await operation.authorizeReplay?.(context, JSON.parse(row.result) as Result)
     frame.closing = true
     internalHooks.onClosing?.()
@@ -631,7 +649,7 @@ export async function execute<Payload, Authorization, Result>(
 
 /**
  * Deletes completed receipts last updated strictly before `olderThan`. After pruning, the same
- * identity runs as a fresh command again, so keep receipts at least as long as clients may retry.
+ * identity runs as a fresh operation again, so keep receipts at least as long as clients may retry.
  */
 export async function pruneReceipts(
   client: QueryClientContract,

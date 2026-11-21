@@ -29,6 +29,11 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - name: Test packed candidate in a clean SQLite host
+        run: |
+          mkdir -p tmp/consumer-package
+          pnpm pack --pack-destination tmp/consumer-package
+          bash bin/release_consumer_smoke.sh tmp/consumer-package/*.tgz
       - name: Test built guard with Account Kit
         env:
           TEST_BUILT_GUARD: '1'

@@ -11,9 +11,10 @@ import { execute } from '../index.js'
 import {
   addProof,
   createDatabase,
-  makeCommandInput,
+  makeOperationInput,
   loadMigration,
   makeNoteOperation,
+  makeSignal,
 } from './helpers.js'
 
 const PACKAGE = '@kevinjohn/adonisjs-duplicate-request-guard'
@@ -21,10 +22,7 @@ const PACKAGE = '@kevinjohn/adonisjs-duplicate-request-guard'
 test('configure publishes the receipts migration once, and it works', async ({ assert }) => {
   const root = await mkdtemp(join(tmpdir(), 'adonisjs-duplicate-request-guard-configure-'))
   try {
-    await writeFile(
-      join(root, 'package.json'),
-      '{"type":"module","devDependencies":{"@adonisjs/assembler":"8.6.0"}}'
-    )
+    await writeFile(join(root, 'package.json'), '{"type":"module"}')
     await writeFile(join(root, 'tsconfig.json'), '{}')
     await writeFile(
       join(root, 'adonisrc.ts'),
@@ -66,15 +64,83 @@ test('configure publishes the receipts migration once, and it works', async ({ a
     const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
     await execute(client, operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
-    const replay = await execute(client, operation, makeCommandInput(1))
+    const replay = await execute(client, operation, makeOperationInput(1))
     assert.isTrue(replay.replayed)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 }).timeout(20_000)
+
+test('simultaneous configure publication is exclusive and a later run preserves the file', async ({
+  assert,
+}) => {
+  const root = await mkdtemp(join(tmpdir(), 'adonisjs-duplicate-request-guard-claim-'))
+  const migrationsPath = join(root, 'migrations')
+  const publishing = makeSignal()
+  const proceed = makeSignal()
+  const command = {
+    app: { migrationsPath: (name = '') => join(migrationsPath, name) },
+    logger: { info() {} },
+    createCodemods: async () => ({
+      makeUsingStub: async (
+        _root: string,
+        _stub: string,
+        data: { migration: { destination: string } }
+      ) => {
+        publishing.fire()
+        await proceed.fired
+        await writeFile(data.migration.destination, 'published migration')
+      },
+    }),
+  } as unknown as Configure
+  const first = configure(command)
+  try {
+    await publishing.fired
+    await assert.rejects(() => configure(command), /publication is already claimed/)
+    proceed.fire()
+    await first
+    const files = await readdir(migrationsPath)
+    assert.lengthOf(files, 1)
+    await configure(command)
+    assert.deepEqual(await readdir(migrationsPath), files)
+    assert.equal(await readFile(join(migrationsPath, files[0]), 'utf8'), 'published migration')
+  } finally {
+    proceed.fire()
+    await first.catch(() => {})
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('a failed publication releases the claim for a later configure', async ({ assert }) => {
+  const root = await mkdtemp(join(tmpdir(), 'adonisjs-duplicate-request-guard-claim-failed-'))
+  try {
+    let failPublication = true
+    const command = {
+      app: { migrationsPath: (name = '') => join(root, name) },
+      logger: { info() {} },
+      createCodemods: async () => ({
+        makeUsingStub: async (
+          _root: string,
+          _stub: string,
+          data: { migration: { destination: string } }
+        ) => {
+          if (failPublication) throw new Error('publication failed')
+          await writeFile(data.migration.destination, 'migration')
+        },
+      }),
+    } as unknown as Configure
+    await assert.rejects(() => configure(command), /publication failed/)
+    assert.deepEqual(await readdir(root), [])
+    failPublication = false
+    await configure(command)
+    assert.lengthOf(await readdir(root), 1)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 test('configure stops when the migrations directory cannot be read', async ({ assert }) => {
   const root = await mkdtemp(join(tmpdir(), 'adonisjs-duplicate-request-guard-unreadable-'))

@@ -2,8 +2,8 @@
 
 ## Actors and boundaries
 
-- **Command caller**: host application code that has already authenticated an actor and scope, constructs an `Operation`, passes the client's `commandId` and `requestKey`, and maps package errors to a response. The package provides no UI or routes.
-- **Operation policies**: host callbacks `authorizeAccess`, `authorizeReplay`, `parseAuthorization`, `authorizeExecute`, and `work`. They must be database-only and safe to rerun when a transaction owner retries its callback.
+- **operation caller**: host application code that has already authenticated an actor and scope, constructs an `Operation`, passes the client's `commandId` and `requestKey`, and maps package errors to a response. The package provides no UI or routes.
+- **Operation authorisation callbacks**: host callbacks `authorizeAccess`, `authorizeReplay`, `parseAuthorization`, `authorizeExecute`, and `work`. They must be database-only and safe to rerun when a transaction owner retries its callback.
 - **Transaction owner**: either `execute`, which owns one transaction and does not retry, or the host/Account Kit using `executeIn` in its existing transaction.
 - **Operator**: configures the receipts migration and SQLite connection/pool and chooses receipt retention.
 

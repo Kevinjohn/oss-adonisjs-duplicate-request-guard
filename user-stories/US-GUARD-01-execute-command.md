@@ -1,6 +1,6 @@
-# US-GUARD-01 — Run a guarded command once
+# US-GUARD-01 — Run a deduplicated operation once
 
-As a command caller, I want to submit a command with a stable identity so that retries return its first result instead of applying the change twice.
+As an operation caller, I want to submit an operation with a stable identity so that retries return its first result instead of applying the change twice.
 
 **Status:** Current when using a supported better-sqlite3 connection and the required receipts migration.
 **Access:** Host authenticates actor/scope and authorizes access. Command identity is scoped to operation name and actor; payload plus scope must match for replay.
@@ -13,15 +13,15 @@ As a command caller, I want to submit a command with a stable identity so that r
 
 | Input                                     | API parameter                        | Required/default/conditions                                                                                                                                                                   |
 | ----------------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `actorId`, `scopeId`                      | String-typed identity values         | Required by `ExecuteInput`; host derives identity and scope from trusted authentication/policy. No additional nonempty-string runtime guard is promised.                                      |
+| `actorId`, `scopeId`                      | String-typed identity values         | Required by `ExecuteInput`; host derives identity and scope from trusted authentication and authorisation. No additional nonempty-string runtime check is promised.                      |
 | `command.commandId`, `command.requestKey` | String-typed client command identity | Both required; preserve the pair on a retry. Operation name plus actor forms a separate receipt namespace.                                                                                    |
 | `payload`                                 | Operation payload                    | Required JSON value; scope and payload are hashed together. Objects must be plain; arrays and finite numbers are allowed.                                                                     |
 | `authorization`                           | Opaque optional input                | Parsed only for fresh reservations when `parseAuthorization` exists; omitted parser supplies `undefined`. A non-optional authorization type requires a parser in the public `Operation` type. |
 
-- Payload/scope JSON validation occurs before any policy; `authorizeAccess` is the first policy and runs before reservation. Invalid payloads do not commit a receipt.
-- `Operation` requires `name`, `authorizeAccess`, and `work`; omitted execute/replay policies allow their respective path. Use only the provided `trx` for database changes.
+- Payload/scope JSON validation occurs before any authorisation callback; `authorizeAccess` is the first authorisation callback and runs before reservation. Invalid payloads do not commit a receipt.
+- `Operation` requires `name`, `authorizeAccess`, and `work`; omitted execute/replay authorisation callbacks allow their respective path. Use only the provided `trx` for database changes.
 - A fresh reservation parses optional opaque authorization, runs execute authorization, calls `work`, and stores a plain JSON result in the same transaction.
-- Matching completed identity returns the stored JSON-equal result with `replayed: true`; mismatched key/command/payload conflicts, re-entering the same pending command from `work` or `authorizeExecute` (both run after the pending insert) reports in-progress, and any fresh-path failure rolls back receipt and writes.
+- Matching completed identity returns the stored JSON-equal result with `replayed: true`; mismatched key/command/payload conflicts, re-entering the same pending operation from `work` or `authorizeExecute` (both run after the pending insert) reports in-progress, and any fresh-path failure rolls back receipt and writes.
 - Non-JSON values (including cycles, dates, non-finite numbers, symbols and class instances) are refused; `-0` replays as `0`.
 
 ## User flow
@@ -29,15 +29,15 @@ As a command caller, I want to submit a command with a stable identity so that r
 ```mermaid
 flowchart TD
     A["Caller submits command ID, request key and payload"] --> B["Host authenticates actor and scope"]
-    B --> C["Guard checks access"]
+    B --> C["Check current access"]
     C --> C2{"Access allowed?"}
     C2 -->|No| C3["Refuse; no new receipt; an existing receipt is unchanged"]
-    C2 -->|Yes| D{"New matching command?"}
-    D -->|No, completed and matching| R{"Replay policy allows?"}
+    C2 -->|Yes| D{"New matching operation?"}
+    D -->|No, completed and matching| R{"Replay authorisation callback allows?"}
     R -->|No| R2["Refuse; stored receipt is kept"]
     R -->|Yes| E["Return first result"]
     D -->|Conflict or pending| F["Return mapped conflict"]
-    D -->|Yes| G["Run command"]
+    D -->|Yes| G["Run operation"]
     G --> H{"Operation succeeds?"}
     H -->|No| I["Rollback; retry can run fresh"]
     H -->|Yes| J["Commit result and return"]
@@ -45,7 +45,7 @@ flowchart TD
 
 ## Code flow
 
-Scope: package command path; caller authentication, HTTP response shaping, and response presentation remain host-owned; operation callbacks must be database-only.
+Scope: package operation path; caller authentication, HTTP response shaping, and response presentation remain host-owned; operation callbacks must be database-only.
 
 ```mermaid
 flowchart TD
@@ -55,7 +55,7 @@ flowchart TD
     D --> D2["authorizeAccess"]
     D2 --> E["unique reservation arbitration"]
     E --> F{"Existing identity?"}
-    F -->|Yes| G["compare command, key, payload"]
+    F -->|Yes| G["compare operation, key, payload"]
     G -->|Mismatch or pending| X["conflict or in-progress error"]
     G -->|Completed and matching| L["authorizeReplay; return replayed=true"]
     F -->|No| H["parse authorization; authorizeExecute; work"]
@@ -71,4 +71,4 @@ flowchart TD
     I -->|Error| Y
 ```
 
-**Code references:** [API](../index.ts), [execute](../src/receipts.ts#L437), [Operation](../src/types.ts#L38)
+**Code references:** [API](../index.ts), [execute](../src/receipts.ts#L636), [Operation](../src/types.ts#L38)

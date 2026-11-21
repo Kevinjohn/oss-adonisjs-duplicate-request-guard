@@ -5,7 +5,7 @@ import {
   addProof,
   countRows,
   createDatabase,
-  makeCommandInput as makeBaseCommandInput,
+  makeOperationInput as makeBaseCommandInput,
   makeNoteOperation,
   listReceipts,
 } from './helpers.js'
@@ -22,7 +22,7 @@ test('a child aborted during reservation never parses authorization and retries 
   const release = Promise.withResolvers<void>()
   const parentError = new Error('parent failed')
   let childResult: Promise<unknown> = Promise.resolve()
-  const makeCommandInput = (sequenceNumber: number) => ({
+  const makeOperationInput = (sequenceNumber: number) => ({
     ...makeBaseCommandInput(sequenceNumber),
     authorization: { proofToken: `p${sequenceNumber}` },
   })
@@ -44,7 +44,9 @@ test('a child aborted during reservation never parses authorization and retries 
       },
     })
     parent.hooks.afterWork = async () => {
-      childResult = executeIn(trx, child.operation, makeCommandInput(2)).catch((failure) => failure)
+      childResult = executeIn(trx, child.operation, makeOperationInput(2)).catch(
+        (failure) => failure
+      )
       await Promise.race([
         reserved.promise,
         childResult.then((outcome) => {
@@ -58,7 +60,7 @@ test('a child aborted during reservation never parses authorization and retries 
       release.resolve()
     }
     try {
-      const failure = await executeIn(trx, parent.operation, makeCommandInput(1)).catch(
+      const failure = await executeIn(trx, parent.operation, makeOperationInput(1)).catch(
         (caught) => caught
       )
       const childError = await childResult
@@ -83,7 +85,7 @@ test('a child aborted during reservation never parses authorization and retries 
   )
 
   const retry = await client.transaction((trx) =>
-    executeIn(trx, child.operation, makeCommandInput(2))
+    executeIn(trx, child.operation, makeOperationInput(2))
   )
   assert.isFalse(retry.replayed)
   assert.deepEqual(child.calls, { access: 2, parse: 1, execute: 1, work: 1, replay: 0 })
