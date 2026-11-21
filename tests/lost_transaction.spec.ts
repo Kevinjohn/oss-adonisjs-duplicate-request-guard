@@ -3,7 +3,7 @@ import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
 import { assertSupportedConnection, execute, executeIn } from '../index.js'
 import {
   addProof,
-  makeAuthorizedCommandInput,
+  makeAuthorizedOperationInput,
   countRows,
   createDatabase,
   makeNamedOperation,
@@ -33,12 +33,12 @@ test.group('a transaction SQLite already ended runs no further command', () => {
     hooks.afterWork = ({ trx }) => endTransaction(trx)
     const trx = await client.transaction()
     try {
-      const first = await executeIn(trx, operation, makeAuthorizedCommandInput(1)).catch(
+      const first = await executeIn(trx, operation, makeAuthorizedOperationInput(1)).catch(
         readOutcomeCode
       )
       assert.equal(first, 'SQLITE_CONSTRAINT_PRIMARYKEY')
       hooks.afterWork = undefined
-      const second = await executeIn(trx, operation, makeAuthorizedCommandInput(2)).catch(
+      const second = await executeIn(trx, operation, makeAuthorizedOperationInput(2)).catch(
         readOutcomeCode
       )
       assert.equal(second, 'E_TRANSACTION_LOST')
@@ -55,7 +55,7 @@ test.group('a transaction SQLite already ended runs no further command', () => {
     const trx = await client.transaction()
     try {
       await endTransaction(trx).catch(() => null)
-      const outcome = await executeIn(trx, operation, makeAuthorizedCommandInput(1)).catch(
+      const outcome = await executeIn(trx, operation, makeAuthorizedOperationInput(1)).catch(
         readOutcomeCode
       )
       assert.equal(outcome, 'E_TRANSACTION_LOST')
@@ -63,7 +63,7 @@ test.group('a transaction SQLite already ended runs no further command', () => {
       // releasing a command's savepoint inside it would still commit.
       await trx.rawQuery('SAVEPOINT host')
       assert.equal(
-        await executeIn(trx, operation, makeAuthorizedCommandInput(1)).catch(readOutcomeCode),
+        await executeIn(trx, operation, makeAuthorizedOperationInput(1)).catch(readOutcomeCode),
         'E_TRANSACTION_LOST'
       )
     } finally {
@@ -80,11 +80,11 @@ test.group('a transaction SQLite already ended runs no further command', () => {
     const child = makeNamedOperation('notes.child')
     child.hooks.afterWork = ({ trx }) => endTransaction(trx)
     parent.hooks.afterWork = async ({ trx }) => {
-      await executeIn(trx, child.operation, makeAuthorizedCommandInput(2)).catch(() => null)
+      await executeIn(trx, child.operation, makeAuthorizedOperationInput(2)).catch(() => null)
     }
     const trx = await client.transaction()
     try {
-      const outcome = await executeIn(trx, parent.operation, makeAuthorizedCommandInput(1)).catch(
+      const outcome = await executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)).catch(
         readOutcomeCode
       )
       assert.equal(outcome, 'E_TRANSACTION_LOST')
@@ -108,7 +108,7 @@ test.group('a lost transaction is lost for every client on its connection', () =
       try {
         if (loser === 'a command') {
           hooks.afterWork = (context) => endTransaction(context.trx)
-          await executeIn(trx, operation, makeAuthorizedCommandInput(1)).catch(() => null)
+          await executeIn(trx, operation, makeAuthorizedOperationInput(1)).catch(() => null)
           hooks.afterWork = undefined
         } else {
           // No command sees this: the watcher armed by the boot-time check does.
@@ -116,7 +116,7 @@ test.group('a lost transaction is lost for every client on its connection', () =
         }
         // The child's savepoint reopens a transaction, so the driver reports one again.
         const outcome = await trx
-          .transaction((child) => executeIn(child, operation, makeAuthorizedCommandInput(2)))
+          .transaction((child) => executeIn(child, operation, makeAuthorizedOperationInput(2)))
           .catch(readOutcomeCode)
         assert.equal(outcome, 'E_TRANSACTION_LOST')
       } finally {
@@ -135,10 +135,10 @@ test.group('a lost transaction is lost for every client on its connection', () =
     const trx = await client.transaction()
     try {
       // The first guarded call on this connection happens with the transaction already open.
-      await executeIn(trx, operation, makeAuthorizedCommandInput(1))
+      await executeIn(trx, operation, makeAuthorizedOperationInput(1))
       await endTransaction(trx).catch(() => null)
       const outcome = await trx
-        .transaction((child) => executeIn(child, operation, makeAuthorizedCommandInput(2)))
+        .transaction((child) => executeIn(child, operation, makeAuthorizedOperationInput(2)))
         .catch(readOutcomeCode)
       assert.equal(outcome, 'E_TRANSACTION_LOST')
     } finally {
@@ -160,15 +160,19 @@ test.group('a lost transaction is lost for every client on its connection', () =
     let laterCode: string | undefined
     parent.hooks.afterWork = async ({ trx }) => {
       await trx
-        .transaction((nested) => executeIn(nested, child.operation, makeAuthorizedCommandInput(2)))
+        .transaction((nested) =>
+          executeIn(nested, child.operation, makeAuthorizedOperationInput(2))
+        )
         .catch(() => null)
       laterCode = await trx
-        .transaction((nested) => executeIn(nested, later.operation, makeAuthorizedCommandInput(3)))
+        .transaction((nested) =>
+          executeIn(nested, later.operation, makeAuthorizedOperationInput(3))
+        )
         .then(() => 'fulfilled', readOutcomeCode)
     }
     const trx = await client.transaction()
     try {
-      await executeIn(trx, parent.operation, makeAuthorizedCommandInput(1)).catch(() => null)
+      await executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)).catch(() => null)
     } finally {
       await trx.rollback().catch(() => null)
     }
@@ -184,7 +188,7 @@ test.group('a lost transaction is lost for every client on its connection', () =
     const { operation, hooks } = makeNoteOperation()
     hooks.afterWork = ({ trx }) => endTransaction(trx)
 
-    const failureCode = await execute(client, operation, makeAuthorizedCommandInput(1)).catch(
+    const failureCode = await execute(client, operation, makeAuthorizedOperationInput(1)).catch(
       readOutcomeCode
     )
     assert.equal(failureCode, 'SQLITE_CONSTRAINT_PRIMARYKEY')
@@ -192,7 +196,7 @@ test.group('a lost transaction is lost for every client on its connection', () =
     assert.equal(await countRows(client, 'notes'), 1)
 
     hooks.afterWork = undefined
-    const outcome = await execute(client, operation, makeAuthorizedCommandInput(1))
+    const outcome = await execute(client, operation, makeAuthorizedOperationInput(1))
     assert.isFalse(outcome.replayed)
     assert.lengthOf(await listReceipts(client), 1)
     assert.equal(await countRows(client, 'notes'), 2)
@@ -203,12 +207,12 @@ test.group('a lost transaction is lost for every client on its connection', () =
     const { operation, hooks } = makeNoteOperation()
     hooks.afterWork = ({ trx }) => endTransaction(trx)
     const lost = await client.transaction()
-    await executeIn(lost, operation, makeAuthorizedCommandInput(1)).catch(() => null)
+    await executeIn(lost, operation, makeAuthorizedOperationInput(1)).catch(() => null)
     await lost.rollback().catch(() => null)
     hooks.afterWork = undefined
     for (const sequenceNumber of [1, 2]) {
       const outcome = await client.transaction((trx) =>
-        executeIn(trx, operation, makeAuthorizedCommandInput(sequenceNumber))
+        executeIn(trx, operation, makeAuthorizedOperationInput(sequenceNumber))
       )
       assert.isFalse(outcome.replayed)
     }
@@ -225,11 +229,11 @@ test.group('only the transaction that was lost is refused', () => {
     const done = await client.transaction()
     await done.commit()
     assert.equal(
-      await executeIn(done, operation, makeAuthorizedCommandInput(1)).catch(readOutcomeCode),
+      await executeIn(done, operation, makeAuthorizedOperationInput(1)).catch(readOutcomeCode),
       'E_TRANSACTION_LOST'
     )
     const outcome = await client.transaction((trx) =>
-      executeIn(trx, operation, makeAuthorizedCommandInput(1))
+      executeIn(trx, operation, makeAuthorizedOperationInput(1))
     )
     assert.isFalse(outcome.replayed)
   })
@@ -247,12 +251,14 @@ test.group('only the transaction that was lost is refused', () => {
       const waiting = client.transaction()
       const committed = done.commit()
       for (let tick = 0; tick < ticks; tick++) await Promise.resolve()
-      const late = executeIn(done, operation, makeAuthorizedCommandInput(1)).catch(readOutcomeCode)
+      const late = executeIn(done, operation, makeAuthorizedOperationInput(1)).catch(
+        readOutcomeCode
+      )
       await committed
       const next = await waiting
       try {
         await late
-        const outcome = await executeIn(next, operation, makeAuthorizedCommandInput(2))
+        const outcome = await executeIn(next, operation, makeAuthorizedOperationInput(2))
         assert.isFalse(outcome.replayed)
         await next.commit()
       } finally {
@@ -270,7 +276,7 @@ test.group('only the transaction that was lost is refused', () => {
     // Twice: the second transaction's PRAGMA follows statements the first ran inside its own.
     for (const sequenceNumber of [1, 2]) {
       const outcome = await client.transaction(
-        (trx) => executeIn(trx, operation, makeAuthorizedCommandInput(sequenceNumber)),
+        (trx) => executeIn(trx, operation, makeAuthorizedOperationInput(sequenceNumber)),
         options
       )
       assert.isFalse(outcome.replayed)
@@ -286,7 +292,7 @@ test.group('only the transaction that was lost is refused', () => {
     try {
       await trx.rawQuery('COMMIT')
       const outcome = await trx
-        .transaction((child) => executeIn(child, operation, makeAuthorizedCommandInput(1)))
+        .transaction((child) => executeIn(child, operation, makeAuthorizedOperationInput(1)))
         .catch(readOutcomeCode)
       assert.equal(outcome, 'E_TRANSACTION_LOST')
     } finally {
@@ -304,7 +310,7 @@ test.group('ordinary query failures do not lose a transaction', () => {
     await client.transaction(async (trx) => {
       await trx.rawQuery('SELECT missing FROM nowhere').catch(() => null)
       const outcome = await trx.transaction((child) =>
-        executeIn(child, operation, makeAuthorizedCommandInput(1))
+        executeIn(child, operation, makeAuthorizedOperationInput(1))
       )
       assert.isFalse(outcome.replayed)
     })
@@ -317,7 +323,7 @@ test.group('ordinary query failures do not lose a transaction', () => {
     assertSupportedConnection(client)
     await client.rawQuery('SELECT missing FROM nowhere').catch(() => null)
     const outcome = await client.transaction((trx) =>
-      executeIn(trx, operation, makeAuthorizedCommandInput(1))
+      executeIn(trx, operation, makeAuthorizedOperationInput(1))
     )
     assert.isFalse(outcome.replayed)
   })
@@ -336,11 +342,11 @@ test.group('annotating the error never skips the rollback', () => {
     const hostile = new Hostile('from work')
     let pending: Promise<unknown> = Promise.resolve()
     hooks.afterWork = ({ trx }) => {
-      pending = executeIn(trx, operation, { ...makeAuthorizedCommandInput(2) })
+      pending = executeIn(trx, operation, { ...makeAuthorizedOperationInput(2) })
       throw hostile
     }
     await client.transaction(async (trx) => {
-      const caught = await executeIn(trx, operation, makeAuthorizedCommandInput(1)).catch(
+      const caught = await executeIn(trx, operation, makeAuthorizedOperationInput(1)).catch(
         (error: unknown) => error
       )
       assert.strictEqual(caught, hostile)

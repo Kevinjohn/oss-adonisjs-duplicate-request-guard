@@ -4,7 +4,7 @@ import {
   addProof,
   createDatabase,
   errors,
-  makeCommandInput,
+  makeOperationInput,
   makeNoteOperation,
   listReceipts,
 } from './helpers.js'
@@ -17,7 +17,7 @@ test.group('identity, ordering and retention rules', () => {
     const failure = new Error('host payload unavailable')
     await client.transaction(async (trx) => {
       const rejected = await executeIn(trx, operation, {
-        ...makeCommandInput(1),
+        ...makeOperationInput(1),
         get payload(): { body: string } {
           throw failure
         },
@@ -26,7 +26,7 @@ test.group('identity, ordering and retention rules', () => {
       assert.lengthOf(await listReceipts(trx), 0)
 
       const outcome = await executeIn(trx, operation, {
-        ...makeCommandInput(1),
+        ...makeOperationInput(1),
         authorization: { proofToken: 'p1' },
       })
       assert.isFalse(outcome.replayed)
@@ -40,7 +40,7 @@ test.group('identity, ordering and retention rules', () => {
     const { client } = await createDatabase()
     const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
-    const command = makeCommandInput(1).command
+    const command = makeOperationInput(1).command
     class Command {
       get commandId() {
         return command.commandId
@@ -51,7 +51,7 @@ test.group('identity, ordering and retention rules', () => {
     }
 
     let authorizationReads = 0
-    const source = makeCommandInput(1)
+    const source = makeOperationInput(1)
     class HostInput implements ExecuteInput<{ body: string }> {
       get actorId() {
         return source.actorId
@@ -106,7 +106,7 @@ test.group('identity, ordering and retention rules', () => {
       receiptCountBeforeReservation = rows.length
     }
     await execute(client, operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     assert.equal(receiptCountBeforeReservation, 0)
@@ -117,13 +117,13 @@ test.group('identity, ordering and retention rules', () => {
     const { operation, calls } = makeNoteOperation()
     await addProof(client, 'p1')
     await execute(client, operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     await assert.rejects(
       () =>
         execute(client, operation, {
-          ...makeCommandInput(1, { payload: { body: 'other' } }),
+          ...makeOperationInput(1, { payload: { body: 'other' } }),
           authorization: 'garbage',
         }),
       errors.DuplicateRequestConflictException
@@ -143,11 +143,11 @@ test.group('identity, ordering and retention rules', () => {
       reentry = await executeIn(
         trx,
         operation,
-        makeCommandInput(1, { payload: { body: 'other' } })
+        makeOperationInput(1, { payload: { body: 'other' } })
       ).catch((e) => e)
     }
     await execute(client, operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     assert.instanceOf(reentry, errors.DuplicateRequestConflictException)
@@ -162,17 +162,17 @@ test.group('identity, ordering and retention rules', () => {
     await addProof(client, 'p2', 'bob')
     await addProof(client, 'p3')
     const a = await execute(client, operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     const b = await execute(client, operation, {
-      ...makeCommandInput(1, { actorId: 'bob' }),
+      ...makeOperationInput(1, { actorId: 'bob' }),
       authorization: { proofToken: 'p2' },
     })
     const c = await execute(
       client,
       { ...operation, name: 'notes.other' },
-      { ...makeCommandInput(1), authorization: { proofToken: 'p3' } }
+      { ...makeOperationInput(1), authorization: { proofToken: 'p3' } }
     )
     assert.deepEqual([a.replayed, b.replayed, c.replayed], [false, false, false])
     assert.lengthOf(await listReceipts(client), 3)
@@ -190,12 +190,12 @@ test.group('identity, ordering and retention rules', () => {
     const first = await execute(
       client,
       { ...operation, name: 'a:actor:b' },
-      { ...makeCommandInput(1, { actorId: 'c' }), authorization: { proofToken: 'p1' } }
+      { ...makeOperationInput(1, { actorId: 'c' }), authorization: { proofToken: 'p1' } }
     )
     const second = await execute(
       client,
       { ...operation, name: 'a' },
-      { ...makeCommandInput(1, { actorId: 'b:actor:c' }), authorization: { proofToken: 'p2' } }
+      { ...makeOperationInput(1, { actorId: 'b:actor:c' }), authorization: { proofToken: 'p2' } }
     )
     assert.deepEqual([first.replayed, second.replayed], [false, false])
   })
@@ -208,15 +208,15 @@ test.group('identity, ordering and retention rules', () => {
     await addProof(client, 'pb', 'bob')
     await addProof(client, 'pa')
     const bob = await execute(client, operation, {
-      ...makeCommandInput(1, { actorId: 'bob' }),
+      ...makeOperationInput(1, { actorId: 'bob' }),
       authorization: { proofToken: 'pb' },
     })
     const alice = await execute(client, operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'pa' },
     })
     assert.notDeepEqual(alice.result, bob.result)
-    const replay = await execute(client, operation, makeCommandInput(1))
+    const replay = await execute(client, operation, makeOperationInput(1))
     assert.deepEqual(replay, { replayed: true, result: alice.result })
   })
 
@@ -231,7 +231,7 @@ test.group('identity, ordering and retention rules', () => {
       await new Promise((resolve) => setTimeout(resolve, 20))
     }
     await execute(client, operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     assert.equal(await pruneReceipts(client, { olderThan: cutoff }), 0)
@@ -242,7 +242,7 @@ test.group('identity, ordering and retention rules', () => {
     const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
     await execute(client, operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     const [row] = await listReceipts(client)
@@ -268,7 +268,7 @@ test.group('identity, ordering and retention rules', () => {
     ] as const) {
       await addProof(client, `p${n}`)
       await execute(client, operation, {
-        ...makeCommandInput(n),
+        ...makeOperationInput(n),
         authorization: { proofToken: `p${n}` },
       })
       assert.equal(await pruneReceipts(client, { olderThan: bce }), 0)
@@ -297,10 +297,10 @@ test.group('identity strings', () => {
         const { operation, calls } = makeNoteOperation()
         await addProof(client, 'p1')
         const request = {
-          ...makeCommandInput(1),
-          command: { ...makeCommandInput(1).command, [field]: value },
+          ...makeOperationInput(1),
+          command: { ...makeOperationInput(1).command, [field]: value },
           authorization: { proofToken: 'p1' },
-        } as ReturnType<typeof makeCommandInput> & { authorization: unknown }
+        } as ReturnType<typeof makeOperationInput> & { authorization: unknown }
         const error = await execute(client, operation, request).catch((e) => e)
         assert.instanceOf(error, errors.InvalidCommandValueException)
         assert.equal(error.status, 400)

@@ -1,12 +1,12 @@
 # US-GUARD-05 — Remove completed receipts past the retry horizon
 
-As an application operator, I want to prune completed receipts only after clients can no longer legitimately retry them so that storage is bounded without reopening recent commands.
+As an application operator, I want to prune completed receipts only after clients can no longer legitimately retry them so that storage is bounded without reopening recent operations.
 
 **Status:** Operator.
 **Access:** Host scheduler/operator with a supported better-sqlite3 connection and authority to choose retention.
 **Entry:** `pruneReceipts(client, { olderThan })`; no package scheduler or Ace pruning command is provided.
 **Documentation:** [Pruning contract](../README.md#contracts).
-**Source:** [pruneReceipts](../src/receipts.ts#L455).
+**Source:** [pruneReceipts](../src/receipts.ts#L654).
 **Coverage:** [Prune tests](../tests/prune.spec.ts).
 
 ## Acceptance criteria
@@ -40,4 +40,4 @@ flowchart TD
     E --> F["Return Number of affected rows or propagate error"]
 ```
 
-**Code references:** [pruneReceipts](../src/receipts.ts#L455), [PruneOptions](../src/types.ts), [pruning tests](../tests/prune.spec.ts).
+**Code references:** [pruneReceipts](../src/receipts.ts#L654), [PruneOptions](../src/types.ts#L77), [pruning tests](../tests/prune.spec.ts).

@@ -9,7 +9,7 @@ import {
   addProof,
   createDatabase,
   errors,
-  makeCommandInput,
+  makeOperationInput,
   makeNoteOperation,
   listReceipts,
 } from './helpers.js'
@@ -32,7 +32,7 @@ test.group('SQLite pool rule', () => {
       await addProof(client, 'p1')
       assert.equal(readMaximumPoolConnectionCount(client), 1)
       const outcome = await execute(client, operation, {
-        ...makeCommandInput(1),
+        ...makeOperationInput(1),
         authorization: { proofToken: 'p1' },
       })
       assert.isFalse(outcome.replayed)
@@ -44,11 +44,11 @@ test.group('SQLite pool rule', () => {
     const { operation, calls } = makeNoteOperation()
     assert.equal(readMaximumPoolConnectionCount(client), 2)
     await assert.rejects(
-      () => execute(client, operation, makeCommandInput(1)),
+      () => execute(client, operation, makeOperationInput(1)),
       errors.UnsafeSqlitePoolException
     )
     await assert.rejects(
-      () => client.transaction((trx) => executeIn(trx, operation, makeCommandInput(1))),
+      () => client.transaction((trx) => executeIn(trx, operation, makeOperationInput(1))),
       errors.UnsafeSqlitePoolException
     )
     assert.equal(calls.access, 0)
@@ -76,7 +76,7 @@ test.group('SQLite pool rule', () => {
       assert.throws(() => assertSupportedConnection(client), /better-sqlite3 only/)
       const { operation, calls } = makeNoteOperation()
       await assert.rejects(
-        () => execute(client, operation, makeCommandInput(1)),
+        () => execute(client, operation, makeOperationInput(1)),
         errors.UnsupportedDialectException
       )
       assert.equal(calls.access, 0)
@@ -106,7 +106,7 @@ test.group('SQLite writer lock', () => {
     }
     try {
       const outcome = await execute(client, operation, {
-        ...makeCommandInput(1),
+        ...makeOperationInput(1),
         authorization: { proofToken: 'p1' },
       })
       assert.isFalse(outcome.replayed)
@@ -131,7 +131,7 @@ test.group('concurrent duplicates', () => {
       entered()
       await gate
     }
-    const body = { ...makeCommandInput(1), authorization: { proofToken: 'p1' } }
+    const body = { ...makeOperationInput(1), authorization: { proofToken: 'p1' } }
     const first = execute(client, operation, body)
     await inWork
     const second = execute(client, operation, body)

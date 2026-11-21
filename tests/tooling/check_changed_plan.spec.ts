@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { PassThrough } from 'node:stream'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import { join } from 'node:path'
@@ -6,10 +7,43 @@ import { fileURLToPath } from 'node:url'
 import { test } from '@japa/runner'
 import {
   countExecutedTests,
+  CheckOutput,
   planChangedChecks,
   type ChangedFile,
   type PlannedCheckStep,
 } from '../../bin/check_changed_plan.js'
+
+test('bounded output retains split test markers independently of the diagnostic tail', ({
+  assert,
+}) => {
+  const output = new CheckOutput()
+  output.append('  Tests  ', 'stdout')
+  output.append('interleaved stderr\n', 'stderr')
+  output.append('12 passed\n', 'stdout')
+  output.append('x'.repeat(512 * 1024), 'stdout')
+  output.append('\nlast diagnostic: café', 'stderr')
+  const result = output.finish()
+  assert.equal(result.testCount, 12)
+  assert.isAtMost(result.output.length, 256 * 1024)
+  assert.notInclude(result.output, 'interleaved stderr')
+  assert.isTrue(result.output.endsWith('last diagnostic: café'))
+})
+
+test('decoded chunks on both streams preserve split UTF-8 and unterminated diagnostic lines', ({
+  assert,
+}) => {
+  const output = new CheckOutput()
+  const stdout = new PassThrough()
+  const stderr = new PassThrough()
+  stdout.setEncoding('utf8').on('data', (chunk) => output.append(chunk, 'stdout'))
+  stderr.setEncoding('utf8').on('data', (chunk) => output.append(chunk, 'stderr'))
+  const text = Buffer.from('café')
+  stdout.write(text.subarray(0, 4))
+  stdout.write(text.subarray(4))
+  stderr.end(' and final error')
+  stdout.end()
+  assert.equal(output.finish().output, 'café and final error')
+})
 
 const packageJson = new URL('../../package.json', import.meta.url)
 const makeChangedPaths = (...paths: string[]): ChangedFile[] =>

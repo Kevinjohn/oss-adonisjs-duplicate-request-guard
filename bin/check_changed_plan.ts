@@ -137,3 +137,46 @@ export function countExecutedTests(output: string): number {
     0
   )
 }
+/** Bounded diagnostic tail, with test markers collected independently of retained output. */
+export class CheckOutput {
+  private tail = ''
+  private readonly partial = { stdout: '', stderr: '' }
+  private readonly oversized = { stdout: false, stderr: false }
+  private count: number | undefined
+
+  append(text: string, stream?: 'stdout' | 'stderr'): void {
+    // Diagnostics retain at most 256 Ki characters, even if a child emits one enormous line.
+    this.tail = (this.tail + text).slice(-256 * 1024)
+    if (!stream) return
+    const lines = text.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      if (!this.oversized[stream]) {
+        if (this.partial[stream].length + line.length <= 16 * 1024) {
+          this.partial[stream] += line
+        } else {
+          this.partial[stream] = ''
+          this.oversized[stream] = true
+        }
+      }
+      if (i < lines.length - 1) {
+        if (!this.oversized[stream]) this.capture(this.partial[stream])
+        this.partial[stream] = ''
+        this.oversized[stream] = false
+      }
+    }
+  }
+
+  private capture(line: string): void {
+    if (this.count === undefined && countExecutedTests(line) > 0) {
+      this.count = countExecutedTests(line)
+    }
+  }
+
+  finish(): { output: string; testCount: number } {
+    for (const stream of ['stdout', 'stderr'] as const) {
+      if (!this.oversized[stream]) this.capture(this.partial[stream])
+    }
+    return { output: this.tail, testCount: this.count ?? 0 }
+  }
+}

@@ -1,16 +1,16 @@
 # User story catalogue
 
-Source baseline: `6ff12225c8a7698d145798ad705e7a9d5f193c45` (origin/main, 2026-11-14). Scope: public exports and operation contract, fresh execution and replay, transaction composition, concurrency/nesting failure behavior, SQLite connection constraints, and pruning. Source-reviewed only; no runtime journeys were exercised for this catalogue.
+Scope: the current public exports and operation contract, fresh execution and replay, transaction composition, concurrency/nesting failure behaviour, SQLite connection constraints, and pruning. Story status describes availability, not a test result. The linked focused tests and packed consumer cover these contracts.
 
 ## Index
 
-| Story                                             | Action                                           | Status   |
-| ------------------------------------------------- | ------------------------------------------------ | -------- |
-| [US-GUARD-01](US-GUARD-01-execute-command.md)     | Run a guarded command once                       | Current  |
-| [US-GUARD-02](US-GUARD-02-compose-transaction.md) | Guard a command inside a host transaction        | Current  |
-| [US-GUARD-03](US-GUARD-03-authorize-replay.md)    | Reauthorize access before replaying a result     | Current  |
-| [US-GUARD-04](US-GUARD-04-operate-receipts.md)    | Install receipt storage                          | Operator |
-| [US-GUARD-05](US-GUARD-05-prune-receipts.md)      | Remove completed receipts past the retry horizon | Operator |
+| Story                                             | Action                                             | Status   |
+| ------------------------------------------------- | -------------------------------------------------- | -------- |
+| [US-GUARD-01](US-GUARD-01-execute-command.md)     | Run a deduplicated operation once                  | Current  |
+| [US-GUARD-02](US-GUARD-02-compose-transaction.md) | Deduplicate an operation inside a host transaction | Current  |
+| [US-GUARD-03](US-GUARD-03-authorize-replay.md)    | Reauthorize access before replaying a result       | Current  |
+| [US-GUARD-04](US-GUARD-04-operate-receipts.md)    | Install receipt storage                            | Operator |
+| [US-GUARD-05](US-GUARD-05-prune-receipts.md)      | Remove completed receipts past the retry horizon   | Operator |
 
 ## Files
 

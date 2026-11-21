@@ -6,7 +6,7 @@ import {
   countRows,
   createDatabase,
   errors,
-  makeCommandInput,
+  makeOperationInput,
   makeNoteOperation,
   listReceipts,
 } from './helpers.js'
@@ -17,7 +17,7 @@ test.group('execute: reserve, complete, replay', () => {
     const { operation, calls } = makeNoteOperation()
     await addProof(client, 'p1')
     const outcome = await execute(db.connection(), operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     assert.deepEqual(outcome, { replayed: false, result: { noteId: 1 } })
@@ -32,11 +32,11 @@ test.group('execute: reserve, complete, replay', () => {
     const { operation, calls } = makeNoteOperation()
     await addProof(client, 'p1')
     await execute(client, operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     const replay = await execute(client, operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: 'garbage',
     })
     assert.deepEqual(replay, { replayed: true, result: { noteId: 1 } })
@@ -49,11 +49,11 @@ test.group('execute: reserve, complete, replay', () => {
     const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
     await execute(client, operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     await client.from('memberships').where('user_id', 'alice').update({ role: 'viewer' })
-    await assert.rejects(() => execute(client, operation, makeCommandInput(1)), 'replay')
+    await assert.rejects(() => execute(client, operation, makeOperationInput(1)), 'replay')
   })
 
   test('access is checked before reservation', async ({ assert }) => {
@@ -61,15 +61,15 @@ test.group('execute: reserve, complete, replay', () => {
     const { operation, calls } = makeNoteOperation()
     await addProof(client, 'p1')
     await execute(client, operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     await client.from('memberships').where('user_id', 'alice').delete()
-    const error = await execute(client, operation, makeCommandInput(1)).catch((e) => e)
+    const error = await execute(client, operation, makeOperationInput(1)).catch((e) => e)
     assert.instanceOf(error, DeniedException)
     assert.equal(error.reason, 'access')
     assert.equal(calls.replay, 0)
-    await assert.rejects(() => execute(client, operation, makeCommandInput(2)), 'access')
+    await assert.rejects(() => execute(client, operation, makeOperationInput(2)), 'access')
     assert.lengthOf(await listReceipts(client), 1)
   })
 })
@@ -99,15 +99,15 @@ test.group('execute: conflicts', () => {
       await addProof(client, 'p1')
       await addProof(client, 'p2')
       await execute(client, operation, {
-        ...makeCommandInput(1),
+        ...makeOperationInput(1),
         authorization: { proofToken: 'p1' },
       })
       await execute(client, operation, {
-        ...makeCommandInput(2),
+        ...makeOperationInput(2),
         authorization: { proofToken: 'p2' },
       })
       await assert.rejects(
-        () => execute(client, operation, { ...makeCommandInput(1), ...change }),
+        () => execute(client, operation, { ...makeOperationInput(1), ...change }),
         errors.DuplicateRequestConflictException
       )
     })
@@ -122,13 +122,13 @@ test.group('execute: failures roll back the reservation', () => {
     const { operation, hooks } = makeNoteOperation()
     await addProof(client, 'p1')
     await assert.rejects(
-      () => execute(client, operation, { ...makeCommandInput(1), authorization: {} }),
+      () => execute(client, operation, { ...makeOperationInput(1), authorization: {} }),
       'parse'
     )
     await assert.rejects(
       () =>
         execute(client, operation, {
-          ...makeCommandInput(1),
+          ...makeOperationInput(1),
           authorization: { proofToken: 'nope' },
         }),
       'proof'
@@ -138,7 +138,10 @@ test.group('execute: failures roll back the reservation', () => {
     }
     await assert.rejects(
       () =>
-        execute(client, operation, { ...makeCommandInput(1), authorization: { proofToken: 'p1' } }),
+        execute(client, operation, {
+          ...makeOperationInput(1),
+          authorization: { proofToken: 'p1' },
+        }),
       'work failed'
     )
     assert.lengthOf(await listReceipts(client), 0)
@@ -147,7 +150,7 @@ test.group('execute: failures roll back the reservation', () => {
 
     hooks.beforeWork = undefined
     const retried = await execute(client, operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     assert.isFalse(retried.replayed)
@@ -158,7 +161,7 @@ test.group('execute: failures roll back the reservation', () => {
     const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
     await assert.rejects(
-      () => execute(client, operation, makeCommandInput(1, { payload: { body: undefined } })),
+      () => execute(client, operation, makeOperationInput(1, { payload: { body: undefined } })),
       errors.InvalidCommandValueException
     )
     await assert.rejects(
@@ -166,7 +169,7 @@ test.group('execute: failures roll back the reservation', () => {
         execute(
           client,
           { ...operation, work: () => undefined as never },
-          { ...makeCommandInput(1), authorization: { proofToken: 'p1' } }
+          { ...makeOperationInput(1), authorization: { proofToken: 'p1' } }
         ),
       errors.InvalidCommandResultException
     )
@@ -179,10 +182,10 @@ test.group('execute: failures roll back the reservation', () => {
     await addProof(client, 'p1')
     const listOp = { ...operation, work: () => ({ noteId: 7, tags: ['a', null] }) as never }
     const first = await execute(client, listOp, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
-    const again = await execute(client, listOp, makeCommandInput(1))
+    const again = await execute(client, listOp, makeOperationInput(1))
     assert.deepEqual(again.result, first.result)
   })
 })
@@ -194,7 +197,7 @@ test.group('what a callback mutates does not change the command', () => {
     const { client } = await createDatabase()
     const { operation, hooks } = makeNoteOperation()
     await addProof(client, 'p1')
-    const request = { ...makeCommandInput(1), authorization: { proofToken: 'p1' } }
+    const request = { ...makeOperationInput(1), authorization: { proofToken: 'p1' } }
     hooks.afterWork = () => {
       request.command.commandId = 'rewritten'
       request.command.requestKey = 'rewritten'
@@ -208,7 +211,7 @@ test.group('what a callback mutates does not change the command', () => {
       rows.map((row) => [row.command_id, row.request_key, row.scope_id, row.state]),
       [['c1', 'k1', 's1', 'completed']]
     )
-    const retry = await execute(client, operation, makeCommandInput(1))
+    const retry = await execute(client, operation, makeOperationInput(1))
     assert.deepEqual(retry, { replayed: true, result: fresh.result })
   })
 
@@ -219,7 +222,7 @@ test.group('what a callback mutates does not change the command', () => {
     const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
     const fresh = await execute(client, operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     const replayedResults: unknown[] = []
@@ -230,7 +233,7 @@ test.group('what a callback mutates does not change the command', () => {
         result.noteId = -1
       },
     }
-    const retry = await execute(client, redacting, makeCommandInput(1))
+    const retry = await execute(client, redacting, makeOperationInput(1))
     assert.deepEqual(replayedResults, [fresh.result])
     assert.deepEqual(retry, { replayed: true, result: fresh.result })
   })

@@ -22,16 +22,27 @@ node ace migration:run
 directory, move the file into one of those paths, or add the directory to them, before
 `migration:run`.
 
+On the development branch, concurrent configure publication is exclusive. If a simultaneous
+configure fails because another process owns publication, let the first finish then rerun.
+If configure stops unexpectedly, check that no configure is still running before removing its
+empty `.request-receipts-configure.lock` directory. The lock is temporary; migration names and
+contents are unchanged.
+
 Peers: `@adonisjs/core` ^7.0.0, `@adonisjs/lucid` ^22.0.0. Node >= 24. Each release lists its
 archive's SHA-256.
 
+The configure hook uses Core's `makeUsingStub`, not an Assembler code transformer, so this package
+does not declare an Assembler peer. Clean packed-candidate consumers have configured twice,
+run the migration and replayed a v0.1.3 receipt without Assembler on Core 7.0.0/Lucid 22.0.0
+and Core 7.6.0/Lucid 22.4.2.
+
 ## User stories
 
-See the [user story catalogue](https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/blob/main/user-stories/README.md) for source-reviewed command behavior, transaction boundaries, replay policy and operations.
+See the [user story catalogue](https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/blob/main/user-stories/README.md) for operation behaviour, transaction boundaries, replay authorisation and receipt storage.
 
 ## Use
 
-The guard protects database writes made through the operation's transaction. If an email or
+Request deduplication protects database writes made through the operation's transaction. If an email or
 webhook must survive retries, record it in the same transaction and let a separate delivery
 process send it.
 
@@ -53,6 +64,7 @@ const createNote: Operation<{ body: string }, undefined, { noteId: number }> = {
 
 // In an authenticated controller, derive actorId from the signed-in user and validate the
 // request data. The client supplies the same commandId and requestKey on each retry.
+// scopeId and the operation name are host-owned; never accept them as unchecked request fields.
 return execute(db.connection(), createNote, {
   actorId,
   scopeId: actorId,
@@ -72,7 +84,7 @@ belongs to the same authenticated account. If a receipt contains a project resul
 visible while the caller retains a particular project role, use `authorizeReplay` to check that
 role against the stored result before returning it.
 
-For a protected command, pass the client's authorization through untouched. Put single-use
+For a protected operation, pass the client's authorisation through untouched. Put single-use
 proof parsing in `parseAuthorization` and proof consumption in `authorizeExecute`, before the
 write and inside the same transaction. Neither runs on replay. If `parseAuthorization` is
 omitted, its authorization type must admit `undefined`; the authorization input is then ignored.
@@ -92,50 +104,52 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
   outer transaction holds the pool's only connection, so the call waits and fails with knex's
   acquire timeout. Pass the active transaction to `executeIn` instead.
 - **Savepoint.** Reservation and the fresh path run under a raw SQL savepoint on the caller's
-  transaction, so `context.trx` is that same transaction. Commands compose: `work` may call
-  `executeIn(trx, ...)` for another command, open `trx.transaction()`, or query `trx` directly.
-- **One command at a time per transaction. Await `executeIn` before issuing any other query on
+  transaction, so `context.trx` is that same transaction. Operations compose: `work` may call
+  `executeIn(trx, ...)` for another operation, open `trx.transaction()`, or query `trx` directly.
+- **One operation at a time per transaction. Await `executeIn` before issuing any other query on
   that transaction.** Savepoints on one connection are a stack. A call is accepted only when no
-  command is open on the `trx`, or from inside the innermost open command's own policies or `work`
+  operation is open on the `trx`, or from inside the innermost open operation's own authorisation callbacks or `work`
   (a nested call). A sibling (`Promise.all` on one trx), a call that lost its async context, or a
-  call from a command that already returned is refused at once with `E_CONCURRENT_COMMAND`; it never
-  waits. A command that reaches completion while a nested command it started is still open fails
+  call from an operation that already returned is refused at once with `E_CONCURRENT_COMMAND`; it never
+  waits. An operation that reaches completion while a nested operation it started is still open fails
   with `E_UNAWAITED_NESTED_COMMAND` and rolls back both. The package cannot see host queries: a host
-  query on `trx` while a command is open runs inside that command's savepoint and is lost if the
-  command fails.
-- **Aborted nested commands.** When a command fails or unwinds while a nested command it started is
+  query on `trx` while an operation is open runs inside that operation's savepoint and is lost if the
+  operation fails.
+- **Aborted nested operations.** When an operation fails or unwinds while a nested operation it started is
   still running (for example `Promise.all([executeIn(trx, child), validate()])` where `validate`
-  rejects first), it marks that nested command aborted and waits for it to settle before rolling
-  back. The nested command stops at its next checkpoint (before each of its statements, policies
+  rejects first), it marks that nested operation aborted and waits for it to settle before rolling
+  back. The nested operation stops at its next checkpoint (before each of its statements, authorisation callbacks
   and `work`), and anything it wrote stays inside the parent's savepoint, so the rollback removes
   it: no note without a receipt, and a retry runs once. The parent rethrows its own error with the
   nested `E_UNAWAITED_NESTED_COMMAND` as `cause`: the same error the nested call rejects with, whose
   own `cause` is the nested callback's error when it threw one. Committing afterwards is safe. A
-  nested command whose `work` never settles keeps its parent waiting. The abort reaches every open
-  command nested below as well. Once a command starts to complete, replay or unwind, or is aborted,
-  it accepts no new nested command: a late call from its context gets `E_UNAWAITED_NESTED_COMMAND`,
-  since it would outlive the command that should have awaited it.
+  nested operation whose `work` never settles keeps its parent waiting. The abort reaches every open
+  operation nested below as well. Once an operation starts to complete, replay or unwind, or is aborted,
+  it accepts no new nested operation: a late call from its context gets `E_UNAWAITED_NESTED_COMMAND`,
+  since it would outlive the operation that should have awaited it. On the development branch,
+  the package internally observes nested rejections so a dropped child promise does not additionally
+  cause an unhandled rejection. Awaiting the child still rejects; callers must await nested work.
 - **Original errors.** If SQLite already rolled back the whole transaction (`INSERT OR ROLLBACK`, a
   busy abort), the original error, such as `SQLITE_BUSY`, is rethrown; the failed savepoint cleanup
   is attached as its `cause` when it has none. That transaction is over even though Lucid still
   reports it open: do not catch the error and carry on, roll the transaction back and start a new
   one. Until you do, `executeIn` on that client or on any child transaction of it is refused with
-  `E_TRANSACTION_LOST`, and a command still open around the failed one stops at its next
+  `E_TRANSACTION_LOST`, and an operation still open around the failed one stops at its next
   checkpoint. The same holds when one of your own statements ended the transaction (a failed
   `INSERT OR ROLLBACK`, a raw `COMMIT`), with two limits. The package watches a Lucid connection
-  only from its first guarded call on it, so call `assertSupportedConnection(db.connection())` at
+  only from its first deduplicated call on it, so call `assertSupportedConnection(db.connection())` at
   boot, and again after closing and reopening a connection, to cover transactions before that.
   And a statement issued on the transaction without awaiting the one that ended it can slip past
   the check. Your own later queries on a lost transaction autocommit.
-- **Reruns and failures.** An owner may roll back and rerun the callback, so policies and `work`
+- **Reruns and failures.** An owner may roll back and rerun the callback, so authorisation callbacks and `work`
   must be database-only and safe to rerun. Any failure rolls the savepoint back, even when the host
-  catches it and commits. A failed fresh command leaves no pending receipt or partial work, so its
+  catches it and commits. A failed fresh operation leaves no pending receipt or partial work, so its
   identity runs fresh next time. A refused replay preserves its completed receipt; a later permitted
   attempt replays that result.
 - **SQLite writers.** better-sqlite3 waits for locks synchronously, so a second in-process writer
   stalls the event loop. `E_UNSAFE_SQLITE_POOL` is thrown when `pool.max` is not 1 (the knex
   default), or when a second open Lucid connection (any name, any Database instance, symlinks
-  resolved, surrounding whitespace trimmed as the driver does) runs commands on a file another open
+  resolved, surrounding whitespace trimmed as the driver does) runs operations on a file another open
   connection already used. Hard-linked paths and `file:` URI filenames are not detected. Closing a
   connection releases its file; every `:memory:` or blank-filename connection is its own database. `executeIn` first takes the
   writer lock with a no-op update, so a commit by another process between the access check and the
@@ -151,7 +165,7 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
   the result after `execute` returns. Actor, scope and command identity are read once when the call
   starts; keep the payload itself unchanged until the call settles.
 - **Identity scope.** Command ids and request keys are scoped to one actor's operation. Another
-  actor using the same ids runs its own command and learns nothing about yours. Command ids and
+  actor using the same ids runs its own operation and learns nothing about yours. Command ids and
   request keys must be well-formed Unicode strings (no lone surrogates); others are refused with
   `E_INVALID_COMMAND_VALUE` (400) before `authorizeAccess`.
 - **Pruning.** `pruneReceipts(db.connection(), { olderThan })` deletes completed receipts updated
@@ -161,7 +175,7 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
 ## Errors
 
 `errors.*` / `E_*` exports, all `@adonisjs/core` exceptions: `E_DUPLICATE_REQUEST_CONFLICT` (409),
-`E_DUPLICATE_REQUEST_IN_PROGRESS` (409, only on re-entry from the command's own `work` or policies),
+`E_DUPLICATE_REQUEST_IN_PROGRESS` (409, only on re-entry from the operation's own `work` or authorisation callbacks),
 `E_INVALID_COMMAND_VALUE` (400), `E_CONCURRENT_COMMAND`, `E_UNAWAITED_NESTED_COMMAND`,
 `E_INVALID_COMMAND_RESULT`, `E_RECEIPT_NOT_PENDING`,
 `E_RECEIPT_SCHEMA` (receipts table from an older stub), `E_TRANSACTION_LOST`, `E_TRANSACTION_OWNER`,

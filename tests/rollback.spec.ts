@@ -3,11 +3,11 @@ import { execute, executeIn } from '../index.js'
 import { internalHooks } from '../src/receipts.js'
 import {
   addProof,
-  makeAuthorizedCommandInput,
+  makeAuthorizedOperationInput,
   listReceiptStates,
   countRows,
   createDatabase,
-  makeCommandInput,
+  makeOperationInput,
   makeNamedOperation,
   makeNoteOperation,
   listReceipts,
@@ -27,7 +27,7 @@ test.group('a failed execute never leaves a pending row', () => {
     }
     await client.transaction(async (trx) => {
       const swallowed = await executeIn(trx, operation, {
-        ...makeCommandInput(1),
+        ...makeOperationInput(1),
         authorization: { proofToken: 'p1' },
       }).catch(() => null)
       assert.isNull(swallowed)
@@ -40,7 +40,7 @@ test.group('a failed execute never leaves a pending row', () => {
 
     hooks.afterWork = undefined
     const retry = await execute(client, operation, {
-      ...makeCommandInput(1),
+      ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     assert.isFalse(retry.replayed)
@@ -55,7 +55,7 @@ test.group('a failed execute never leaves a pending row', () => {
     let pending: Promise<unknown> = Promise.resolve()
     hooks.afterWork = ({ trx }) => {
       pending = executeIn(trx, operation, {
-        ...makeCommandInput(2),
+        ...makeOperationInput(2),
         authorization: { proofToken: 'p2' },
       })
       // A cause cannot be attached to this error; the rollback must still run.
@@ -63,7 +63,7 @@ test.group('a failed execute never leaves a pending row', () => {
     }
     await client.transaction(async (trx) => {
       const error = await executeIn(trx, operation, {
-        ...makeCommandInput(1),
+        ...makeOperationInput(1),
         authorization: { proofToken: 'p1' },
       }).then(
         () => 'resolved',
@@ -94,7 +94,7 @@ test.group('cleanup never masks the original error', () => {
     const trx = await client.transaction()
     let caught: (Error & { code?: string }) | undefined
     try {
-      await awaitWithDeadline(executeIn(trx, operation, makeAuthorizedCommandInput(1)))
+      await awaitWithDeadline(executeIn(trx, operation, makeAuthorizedOperationInput(1)))
     } catch (error) {
       caught = error as Error & { code?: string }
     } finally {
@@ -140,7 +140,7 @@ test.group('an aborted child never commits without its receipt', (group) => {
     }
     parent.hooks.afterWork = async ({ trx }) => {
       releaseOnUnwind(release.fire)
-      childRun = executeIn(trx, child.operation, makeAuthorizedCommandInput(2))
+      childRun = executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
       const settle = () => {
         state.childSettled = true
       }
@@ -166,7 +166,11 @@ test.group('an aborted child never commits without its receipt', (group) => {
       let parentCause: unknown
       await awaitWithDeadline(
         client.transaction(async (trx) => {
-          parentError = await executeIn(trx, parent.operation, makeAuthorizedCommandInput(1)).then(
+          parentError = await executeIn(
+            trx,
+            parent.operation,
+            makeAuthorizedOperationInput(1)
+          ).then(
             () => 'fulfilled',
             (error: Error) => {
               parentCause = error.cause
@@ -174,7 +178,7 @@ test.group('an aborted child never commits without its receipt', (group) => {
             }
           )
           if (waits) await childSettled()
-          await executeIn(trx, next.operation, makeAuthorizedCommandInput(3))
+          await executeIn(trx, next.operation, makeAuthorizedOperationInput(3))
         })
       )
       assert.equal(parentError, 'validation failed')
@@ -186,7 +190,7 @@ test.group('an aborted child never commits without its receipt', (group) => {
       assert.deepEqual(await listReceiptStates(client), [['c3', 'completed']])
       assert.equal(await countRows(client, 'notes'), 1)
       const retry = await client.transaction((trx) =>
-        executeIn(trx, child.operation, makeAuthorizedCommandInput(2))
+        executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
       )
       assert.isFalse(retry.replayed)
       assert.equal(child.calls.work, 2)
@@ -209,7 +213,7 @@ test.group('an aborted child never commits without its receipt', (group) => {
     let childCode = ''
     parent.hooks.afterWork = async ({ trx }) => {
       releaseOnUnwind(release.fire)
-      const nested = executeIn(trx, child.operation, makeAuthorizedCommandInput(2)).catch(
+      const nested = executeIn(trx, child.operation, makeAuthorizedOperationInput(2)).catch(
         (error: { code?: string }) => {
           childCode = error.code ?? 'other'
         }
@@ -218,7 +222,7 @@ test.group('an aborted child never commits without its receipt', (group) => {
     }
     await awaitWithDeadline(
       client.transaction((trx) =>
-        executeIn(trx, parent.operation, makeAuthorizedCommandInput(1)).catch(() => null)
+        executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)).catch(() => null)
       )
     )
     assert.equal(childCode, 'E_UNAWAITED_NESTED_COMMAND')

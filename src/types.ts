@@ -1,12 +1,12 @@
 import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
 
-/** The paired identity a client sends with one command. */
+/** The paired identity a client sends with one operation; preserve both values on retries. */
 export interface CommandIdentity {
   commandId: string
   requestKey: string
 }
 
-/** What every policy and the work callback receive. Use only `trx` for database access. */
+/** What every authorisation callback and the work callback receive. Use only `trx` for database access. */
 export interface OperationContext<Payload> {
   actorId: string
   scopeId: string
@@ -15,7 +15,7 @@ export interface OperationContext<Payload> {
 }
 
 interface OperationCallbacks<Payload, Authorization, Result> {
-  /** Namespace for request keys. Combined with the actor id. */
+  /** Host-chosen stable operation namespace for request keys, combined with the actor id. */
   name: string
   /** Runs first, before reservation. Throw to deny; nothing is written. */
   authorizeAccess(context: OperationContext<Payload>): Promise<void> | void
@@ -26,12 +26,12 @@ interface OperationCallbacks<Payload, Authorization, Result> {
     context: OperationContext<Payload>,
     authorization: Authorization
   ): Promise<void> | void
-  /** The command itself. Its JSON result is stored and replayed. */
+  /** Fresh operation work. Its JSON result is stored and replayed. */
   work(context: OperationContext<Payload>, authorization: Authorization): Promise<Result> | Result
 }
 
 /**
- * One guarded command. Policies and `work` must be database-only and safe to rerun: a transaction
+ * One deduplicated operation. Authorisation callbacks and `work` must be database-only and safe to rerun: a transaction
  * owner may roll back and call them again. A parser may be omitted when Authorization includes
  * undefined; otherwise it must supply the authorization promised to the callbacks.
  */
@@ -44,10 +44,20 @@ export type Operation<Payload, Authorization, Result> = OperationCallbacks<
     ? { parseAuthorization?(raw: unknown): Authorization }
     : { parseAuthorization(raw: unknown): Authorization })
 
+/**
+ * The input to `execute` (owns its transaction) or `executeIn` (host transaction).
+ * Only better-sqlite3 is supported. The host derives actor and scope from current access,
+ * validates the payload, and chooses the operation namespace; the client supplies the paired
+ * identity and optional opaque authorisation. Keep payload and identity stable across retries.
+ */
 export interface ExecuteInput<Payload> {
+  /** Actor established by the host's authentication, not trusted from the request body. */
   actorId: string
+  /** Scope established by host authorisation. */
   scopeId: string
+  /** Validated JSON operation payload; must remain unchanged until the call settles. */
   payload: Payload
+  /** Client-supplied paired identity. Stored field and member names are retained for compatibility. */
   command: CommandIdentity
   /** Opaque. Passed to `parseAuthorization` only when this request wins a fresh reservation. */
   authorization?: unknown
@@ -63,6 +73,7 @@ export interface Outcome<Result> {
   result: Result
 }
 
+/** Retention boundary for completed receipts in the supported SQLite database. */
 export interface PruneOptions {
   /** Delete completed receipts last updated before this instant. */
   olderThan: Date
