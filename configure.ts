@@ -8,7 +8,8 @@ import type Configure from '@adonisjs/core/commands/configure'
 /** Directory holding the package stubs, next to this file in source and in build. */
 export const stubsRoot = fileURLToPath(new URL('./stubs/', import.meta.url))
 
-const MIGRATION_SUFFIX = '_create_request_receipts_table.ts'
+const MIGRATION_IDENTITY = '_create_request_receipts_table'
+const MIGRATION_SUFFIX = `${MIGRATION_IDENTITY}.ts`
 
 async function hasReceiptsMigration(migrationsPath: string): Promise<boolean> {
   const entries = await readdir(migrationsPath, { withFileTypes: true, recursive: true })
@@ -20,7 +21,9 @@ async function hasReceiptsMigration(migrationsPath: string): Promise<boolean> {
     }
   }
   const { files } = await sourceFiles(pathToFileURL(migrationsPath + sep), './', false)
-  return files.some(({ absPath }) => absPath.endsWith(MIGRATION_SUFFIX))
+  return files.some(
+    ({ absPath, name }) => !absPath.endsWith('.json') && name.endsWith(MIGRATION_IDENTITY)
+  )
 }
 
 /** Publishes the receipts migration once, with an exclusive publication claim. */
