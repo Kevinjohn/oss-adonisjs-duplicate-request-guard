@@ -1,7 +1,8 @@
-import { mkdir, readdir, rmdir, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readdir, rmdir } from 'node:fs/promises'
+import { join, sep } from 'node:path'
 import { RuntimeException } from '@adonisjs/core/exceptions'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { sourceFiles } from '@adonisjs/lucid/utils'
 import type Configure from '@adonisjs/core/commands/configure'
 
 /** Directory holding the package stubs, next to this file in source and in build. */
@@ -10,24 +11,16 @@ export const stubsRoot = fileURLToPath(new URL('./stubs/', import.meta.url))
 const MIGRATION_SUFFIX = '_create_request_receipts_table.ts'
 
 async function hasReceiptsMigration(migrationsPath: string): Promise<boolean> {
-  const entries = await readdir(migrationsPath, { withFileTypes: true })
-  const matching = entries.filter((entry) => entry.name.endsWith(MIGRATION_SUFFIX))
-  for (const entry of matching) {
-    // A link counts when it resolves to a regular file; a directory or broken link provides no table.
-    const usable =
-      entry.isFile() ||
-      (entry.isSymbolicLink() &&
-        (await stat(join(migrationsPath, entry.name)).then(
-          (info) => info.isFile(),
-          () => false
-        )))
-    if (!usable) {
+  const entries = await readdir(migrationsPath, { withFileTypes: true, recursive: true })
+  for (const entry of entries) {
+    if (entry.name.endsWith(MIGRATION_SUFFIX) && !entry.isFile()) {
       throw new RuntimeException(
-        `${join(migrationsPath, entry.name)} matches the receipts migration name but is not a regular file; remove or replace it and rerun configure`
+        `${join(entry.parentPath, entry.name)} matches the receipts migration name but is not a regular file; replace it with a regular migration file or remove it and rerun configure`
       )
     }
   }
-  return matching.length > 0
+  const { files } = await sourceFiles(pathToFileURL(migrationsPath + sep), './', false)
+  return files.some(({ absPath }) => absPath.endsWith(MIGRATION_SUFFIX))
 }
 
 /** Publishes the receipts migration once, with an exclusive publication claim. */

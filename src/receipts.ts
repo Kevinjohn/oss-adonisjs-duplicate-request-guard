@@ -419,17 +419,31 @@ export function executeIn<Payload, Authorization, Result>(
   input: ExecuteInput<Payload>
 ): Promise<Outcome<Result>> {
   const nested = commandFrame.getStore()?.trx === trx
-  const run = executeInTransaction(trx, operation, input)
+  const run = executeInTransaction(trx, operation, () => snapshotInput(input))
   // A parent already waits for and reports failure of an outstanding nested operation.
   // Observe the actual returned promise without changing the rejection callers await.
   if (nested) void run.catch(() => {})
   return run
 }
 
+// Preserve the dispatch identity while leaving authorization lazy and the payload by reference.
+function snapshotInput<Payload>(input: ExecuteInput<Payload>): ExecuteInput<Payload> {
+  const { actorId, scopeId, payload, command } = input
+  return {
+    actorId,
+    scopeId,
+    payload,
+    command: { commandId: command?.commandId, requestKey: command?.requestKey },
+    get authorization() {
+      return input.authorization
+    },
+  }
+}
+
 async function executeInTransaction<Payload, Authorization, Result>(
   trx: TransactionClientContract,
   operation: Operation<Payload, Authorization, Result>,
-  input: ExecuteInput<Payload>
+  admitInput: () => ExecuteInput<Payload>
 ): Promise<Outcome<Result>> {
   if (!trx.isTransaction) {
     throw new TransactionOwnerException('executeIn requires a transaction client')
@@ -437,18 +451,7 @@ async function executeInTransaction<Payload, Authorization, Result>(
   assertSupportedConnection(trx)
   const frame = claimCommandFrame(trx)
   try {
-    // Read the identity once, at admission: a callback that later mutates `input` cannot make the
-    // reservation, the context and the completion disagree.
-    const { actorId, scopeId, payload, command } = input
-    const admitted: ExecuteInput<Payload> = {
-      actorId,
-      scopeId,
-      payload,
-      command: { commandId: command?.commandId, requestKey: command?.requestKey },
-      get authorization() {
-        return input.authorization
-      },
-    }
+    const admitted = admitInput()
     // The one outcome both observers see: this call's caller and an unwinding parent, which attaches
     // it as its error's cause.
     frame.run = commandFrame
@@ -644,7 +647,8 @@ export async function execute<Payload, Authorization, Result>(
     )
   }
   assertSupportedConnection(client)
-  return client.transaction((trx) => executeIn(trx, operation, input))
+  const admitted = snapshotInput(input)
+  return client.transaction((trx) => executeInTransaction(trx, operation, () => admitted))
 }
 
 /**

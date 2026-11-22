@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -6,6 +6,7 @@ import { test } from '@japa/runner'
 import { ListLoader } from '@adonisjs/core/ace'
 import Configure from '@adonisjs/core/commands/configure'
 import { IgnitorFactory } from '@adonisjs/core/factories'
+import { sourceFiles } from '@adonisjs/lucid/utils'
 import { configure } from '../configure.js'
 import { execute } from '../index.js'
 import {
@@ -57,7 +58,22 @@ test('configure publishes the receipts migration once, and it works', async ({ a
     assert.deepEqual(await readdir(migrationsDir), files)
     assert.equal(await readFile(join(migrationsDir, files[0]), 'utf8'), published)
 
-    const Migration = await loadMigration(published)
+    const relativeMigrations = './database/migrations'
+    const discover = () => sourceFiles(pathToFileURL(`${root}/`), relativeMigrations, false)
+    const initial = await discover()
+    assert.lengthOf(initial.files, 1)
+    const nestedDir = join(migrationsDir, 'prior')
+    await mkdir(nestedDir)
+    const nestedMigration = join(nestedDir, files[0])
+    await rename(join(migrationsDir, files[0]), nestedMigration)
+    await ignitor.ace().handle(['configure', PACKAGE])
+    const { files: discovered } = await discover()
+    assert.deepEqual(
+      discovered.map(({ absPath }) => absPath),
+      [nestedMigration]
+    )
+
+    const Migration = await loadMigration(await readFile(discovered[0].absPath, 'utf8'))
     const { client } = await createDatabase()
     await client.schema.dropTable('request_receipts')
     await new Migration(client, 'published', false).execUp()
@@ -207,14 +223,16 @@ test.group('configure with an existing matching migrations entry', () => {
     }
   })
 
-  test('a link to a regular file counts as existing', async ({ assert }) => {
+  test('a link to a regular file stops configure', async ({ assert }) => {
     const state = await run(async (migrations, root) => {
       await writeFile(join(root, 'real.ts'), '')
       await symlink(join(root, 'real.ts'), join(migrations, NAME))
     })
     try {
-      await state.run()
-      assert.lengthOf(state.logged, 1)
+      const { files } = await sourceFiles(pathToFileURL(`${state.root}/`), './migrations', false)
+      assert.lengthOf(files, 0)
+      await assert.rejects(() => state.run(), new RegExp(`${NAME}.*not a regular file`))
+      assert.lengthOf(state.logged, 0)
       assert.isFalse(state.codemodsCreated)
     } finally {
       await rm(state.root, { recursive: true, force: true })
@@ -237,6 +255,8 @@ test.group('configure with an existing matching migrations entry', () => {
       symlink(join(root, 'missing.ts'), join(migrations, NAME))
     )
     try {
+      const { files } = await sourceFiles(pathToFileURL(`${state.root}/`), './migrations', false)
+      assert.lengthOf(files, 0)
       await assert.rejects(() => state.run(), new RegExp(`${NAME}.*not a regular file`))
       assert.isFalse(state.codemodsCreated)
     } finally {
