@@ -18,7 +18,7 @@ export class DuplicateRequestConflictException extends Exception {
 /**
  * The receipt is still pending. The fresh path runs under a savepoint that is rolled back on any
  * failure, so a pending row is never committed; this is reachable only by re-entering the same
- * command (same identity and payload) from inside its own `work` or policies.
+ * operation (same identity and payload) from inside its own `work` or authorisation callbacks.
  */
 export class DuplicateRequestInProgressException extends Exception {
   static code = 'E_DUPLICATE_REQUEST_IN_PROGRESS'
@@ -71,9 +71,9 @@ export class UnsupportedDialectException extends Exception {
 }
 
 /**
- * Another command is open on the transaction and the caller is not inside it: a sibling (for
- * example `Promise.all` on one trx), a call that lost its async context, or a call from a command
- * that already returned. Await each `executeIn` before starting the next one on the same trx.
+ * Another operation is open on the transaction and the caller is not inside it: a sibling (for
+ * example `Promise.all` on one trx), a call that lost its async context, or a call from an
+ * operation that already returned. Await each `executeIn` before starting the next one on the same trx.
  */
 export class ConcurrentCommandException extends Exception {
   static code = 'E_CONCURRENT_COMMAND'
@@ -87,8 +87,8 @@ export class ConcurrentCommandException extends Exception {
 }
 
 /**
- * A command reached completion while a nested command it started was still open, or an enclosing
- * command rolled back over this one. Nothing from either command is kept.
+ * An operation reached completion while a nested operation it started was still open, or an
+ * enclosing operation rolled back over this one. Nothing from either operation is kept.
  */
 export class UnawaitedNestedCommandException extends Exception {
   static code = 'E_UNAWAITED_NESTED_COMMAND'
@@ -114,7 +114,7 @@ export class ReceiptSchemaException extends Exception {
   }
 }
 
-/** Completion found no pending receipt for the command. */
+/** Completion found no pending receipt for the operation. */
 export class ReceiptNotPendingException extends Exception {
   static code = 'E_RECEIPT_NOT_PENDING'
   static status = 500
@@ -140,8 +140,8 @@ export class TransactionOwnerException extends Exception {
 
 /**
  * SQLite ended the host transaction underneath its Lucid client (`INSERT OR ROLLBACK`, a busy
- * abort), in an earlier command or a host query. Statements on that client would now autocommit, so
- * guarded commands refuse it: roll the transaction back and start a new one.
+ * abort), in an earlier operation or a host query. Statements on that client would now autocommit,
+ * so deduplicated operations refuse it: roll the transaction back and start a new one.
  */
 export class TransactionLostException extends Exception {
   static code = 'E_TRANSACTION_LOST'

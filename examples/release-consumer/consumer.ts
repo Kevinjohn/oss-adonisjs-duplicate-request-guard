@@ -29,6 +29,9 @@ export async function verifyInference(
       authorizeAccess() {},
       parseAuthorization: () => 'proof',
       work({ payload }, proof) {
+        // @ts-expect-error The inferred proof must not be any.
+        const invalidProof: number = proof
+        void invalidProof
         return { text: payload.body + proof.toUpperCase() }
       },
     },
@@ -41,6 +44,9 @@ export async function verifyInference(
       authorizeAccess() {},
       parseAuthorization: () => 'proof',
       work({ payload }, proof) {
+        // @ts-expect-error The inferred proof must not be any.
+        const invalidProof: number = proof
+        void invalidProof
         return { text: payload.body + proof.toUpperCase() }
       },
     },
@@ -48,9 +54,11 @@ export async function verifyInference(
   )
   const oldText: string = old.result.text
   const currentText: string = current.result.text
-  // @ts-expect-error The result type must not be any.
-  const wrong: number = current.result.text
-  return [oldText, currentText, wrong]
+  // @ts-expect-error The old archive must infer the result type.
+  const wrongOld: number = old.result.text
+  // @ts-expect-error The current archive must infer the result type.
+  const wrongCurrent: number = current.result.text
+  return [oldText, currentText, wrongOld, wrongCurrent]
 }
 
 const root = new URL('./', import.meta.url)

@@ -15,7 +15,7 @@ As a transaction owner, I want a deduplicated operation to share my transaction 
 - `execute` rejects transaction clients; `executeIn` rejects non-transaction clients (`E_TRANSACTION_OWNER`). Calling `execute` with a base connection inside another transaction is not detected as such and can instead time out acquiring the only pooled connection.
 - Each operation uses a savepoint on the caller transaction; nested `executeIn` is supported from the innermost operation authorisation callbacks/work.
 - Sibling calls, calls with lost async context and calls from a parent that has already returned fail immediately with `E_CONCURRENT_COMMAND`. A late nested call from a still-innermost closing or aborted frame, or a parent finishing with an open nested operation, fails with `E_UNAWAITED_NESTED_COMMAND`. Parent unwinding aborts and waits for children before rollback; a child that never settles keeps the parent waiting.
-- Policies and `work` must be database-only and safe to rerun if the transaction owner reruns its callback. Do not wrap either API in an independent retry loop.
+- Authorisation callbacks and `work` must be database-only and safe to rerun if the transaction owner reruns its callback. Do not wrap either API in an independent retry loop.
 - Original SQLite transaction-abort errors propagate; failed savepoint cleanup is attached as `cause` when possible.
 - Host queries issued on `trx` while an operation is open are inside its savepoint and roll back if that operation fails.
 
