@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Capture operation identity before managed transaction acquisition.
+- Recognize nested receipts migrations and reject matching symlinks during configure.
+
 ## 0.2.0 - 2026-11-21
 
 - Test against Account Kit 0.5.0.

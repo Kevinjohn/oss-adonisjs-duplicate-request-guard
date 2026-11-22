@@ -20,9 +20,9 @@ node ace migration:run
 `configure` writes the migration to the app's migrations directory (`app.migrationsPath()`,
 `database/migrations` by default). If a connection sets its own `migrations.paths` without that
 directory, move the file into one of those paths, or add the directory to them, before
-`migration:run`.
+`migration:run`. Configure recognizes regular receipts migrations in this directory and its subdirectories. If configure reports a matching symlink or other non-file entry, replace it with a regular migration file or remove it before rerunning.
 
-On the development branch, concurrent configure publication is exclusive. If a simultaneous
+Since v0.2.0, concurrent configure publication is exclusive. If a simultaneous
 configure fails because another process owns publication, let the first finish then rerun.
 If configure stops unexpectedly, check that no configure is still running before removing its
 empty `.request-receipts-configure.lock` directory. The lock is temporary; migration names and
@@ -126,7 +126,7 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
   nested operation whose `work` never settles keeps its parent waiting. The abort reaches every open
   operation nested below as well. Once an operation starts to complete, replay or unwind, or is aborted,
   it accepts no new nested operation: a late call from its context gets `E_UNAWAITED_NESTED_COMMAND`,
-  since it would outlive the operation that should have awaited it. On the development branch,
+  since it would outlive the operation that should have awaited it. Since v0.2.0,
   the package internally observes nested rejections so a dropped child promise does not additionally
   cause an unhandled rejection. Awaiting the child still rejects; callers must await nested work.
 - **Original errors.** If SQLite already rolled back the whole transaction (`INSERT OR ROLLBACK`, a

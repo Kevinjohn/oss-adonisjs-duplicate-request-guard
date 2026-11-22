@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -6,16 +6,14 @@ import { test } from '@japa/runner'
 import { ListLoader } from '@adonisjs/core/ace'
 import Configure from '@adonisjs/core/commands/configure'
 import { IgnitorFactory } from '@adonisjs/core/factories'
+import { LoggerFactory } from '@adonisjs/core/factories/logger'
+import { Emitter } from '@adonisjs/core/events'
+import { Database } from '@adonisjs/lucid/database'
+import { MigrationRunner } from '@adonisjs/lucid/migration'
+import { sourceFiles } from '@adonisjs/lucid/utils'
 import { configure } from '../configure.js'
 import { execute } from '../index.js'
-import {
-  addProof,
-  createDatabase,
-  makeOperationInput,
-  loadMigration,
-  makeNoteOperation,
-  makeSignal,
-} from './helpers.js'
+import { makeOperationInput, makeSignal } from './helpers.js'
 
 const PACKAGE = '@kevinjohn/adonisjs-duplicate-request-guard'
 
@@ -57,18 +55,72 @@ test('configure publishes the receipts migration once, and it works', async ({ a
     assert.deepEqual(await readdir(migrationsDir), files)
     assert.equal(await readFile(join(migrationsDir, files[0]), 'utf8'), published)
 
-    const Migration = await loadMigration(published)
-    const { client } = await createDatabase()
-    await client.schema.dropTable('request_receipts')
-    await new Migration(client, 'published', false).execUp()
-    const { operation } = makeNoteOperation()
-    await addProof(client, 'p1')
-    await execute(client, operation, {
-      ...makeOperationInput(1),
-      authorization: { proofToken: 'p1' },
-    })
-    const replay = await execute(client, operation, makeOperationInput(1))
-    assert.isTrue(replay.replayed)
+    const relativeMigrations = './database/migrations'
+    const discover = () => sourceFiles(pathToFileURL(`${root}/`), relativeMigrations, false)
+    const initial = await discover()
+    assert.lengthOf(initial.files, 1)
+    const nestedDir = join(migrationsDir, 'prior')
+    await mkdir(nestedDir)
+    const nestedMigration = join(nestedDir, files[0])
+    await rename(join(migrationsDir, files[0]), nestedMigration)
+    await ignitor.ace().handle(['configure', PACKAGE])
+    const { files: discovered } = await discover()
+    assert.deepEqual(
+      discovered.map(({ absPath }) => absPath),
+      [nestedMigration]
+    )
+
+    // Before any database has applied the migration, also exercise a compiled JavaScript identity.
+    const javascriptMigration = nestedMigration.replace(/\.ts$/, '.js')
+    await writeFile(javascriptMigration, published.replace('protected tableName', 'tableName'))
+    await rm(nestedMigration)
+
+    const app = ignitor.createApp('console')
+    await app.init()
+    const db = new Database(
+      {
+        connection: 'sqlite',
+        connections: {
+          sqlite: {
+            client: 'better-sqlite3',
+            connection: { filename: join(root, 'db.sqlite3') },
+            useNullAsDefault: true,
+          },
+        },
+      },
+      new LoggerFactory().create(),
+      new Emitter(app)
+    )
+    try {
+      const runner = new MigrationRunner(db, app, { direction: 'up' })
+      const before = await runner.getList()
+      assert.deepEqual(before, [
+        {
+          name: `database/migrations/prior/${files[0].slice(0, -3)}`,
+          status: 'pending',
+        },
+      ])
+      await ignitor.ace().handle(['configure', PACKAGE])
+      assert.deepEqual(await runner.getList(), before)
+      await runner.run()
+      assert.isNull(runner.error)
+      assert.lengthOf(Object.keys(runner.migratedFiles), 1)
+
+      const operation = {
+        name: 'setup.check',
+        authorizeAccess() {},
+        work: () => ({ created: true }),
+      }
+      const input = makeOperationInput(1)
+      const client = db.connection()
+      await execute(client, operation, input)
+      assert.deepEqual(await execute(client, operation, input), {
+        replayed: true,
+        result: { created: true },
+      })
+    } finally {
+      await db.manager.closeAll()
+    }
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -207,14 +259,16 @@ test.group('configure with an existing matching migrations entry', () => {
     }
   })
 
-  test('a link to a regular file counts as existing', async ({ assert }) => {
+  test('a link to a regular file stops configure', async ({ assert }) => {
     const state = await run(async (migrations, root) => {
       await writeFile(join(root, 'real.ts'), '')
       await symlink(join(root, 'real.ts'), join(migrations, NAME))
     })
     try {
-      await state.run()
-      assert.lengthOf(state.logged, 1)
+      const { files } = await sourceFiles(pathToFileURL(`${state.root}/`), './migrations', false)
+      assert.lengthOf(files, 0)
+      await assert.rejects(() => state.run(), new RegExp(`${NAME}.*not a regular file`))
+      assert.lengthOf(state.logged, 0)
       assert.isFalse(state.codemodsCreated)
     } finally {
       await rm(state.root, { recursive: true, force: true })
@@ -237,6 +291,8 @@ test.group('configure with an existing matching migrations entry', () => {
       symlink(join(root, 'missing.ts'), join(migrations, NAME))
     )
     try {
+      const { files } = await sourceFiles(pathToFileURL(`${state.root}/`), './migrations', false)
+      assert.lengthOf(files, 0)
       await assert.rejects(() => state.run(), new RegExp(`${NAME}.*not a regular file`))
       assert.isFalse(state.codemodsCreated)
     } finally {

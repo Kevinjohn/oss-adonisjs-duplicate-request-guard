@@ -1,5 +1,12 @@
 import { test } from '@japa/runner'
-import { execute, executeIn, pruneReceipts, RECEIPTS_TABLE, type ExecuteInput } from '../index.js'
+import {
+  execute,
+  executeIn,
+  pruneReceipts,
+  RECEIPTS_TABLE,
+  type ExecuteInput,
+  type Operation,
+} from '../index.js'
 import {
   addProof,
   createDatabase,
@@ -10,6 +17,82 @@ import {
 } from './helpers.js'
 
 test.group('identity, ordering and retention rules', () => {
+  for (const owner of ['managed', 'host'] as const) {
+    test(`${owner} execution keeps the dispatch identity through commit and retry`, async ({
+      assert,
+    }) => {
+      const { client } = await createDatabase()
+      let authorizationReads = 0
+      const original = {
+        ...makeOperationInput(1),
+        get authorization() {
+          authorizationReads++
+          return undefined
+        },
+      }
+      const input = {
+        actorId: original.actorId,
+        scopeId: original.scopeId,
+        payload: original.payload,
+        command: { ...original.command },
+        get authorization() {
+          return original.authorization
+        },
+      }
+      const accessIdentities: { actorId: string; scopeId: string }[] = []
+      const operation: Operation<
+        typeof original.payload,
+        undefined,
+        { actorId: string; scopeId: string }
+      > = {
+        name: 'notes.dispatch',
+        parseAuthorization: () => undefined,
+        authorizeAccess({ actorId, scopeId }) {
+          accessIdentities.push({ actorId, scopeId })
+        },
+        work({ actorId, scopeId }) {
+          return { actorId, scopeId }
+        },
+      }
+      const mutate = () => {
+        input.actorId = 'bob'
+        input.scopeId = 's2'
+        input.command.commandId = 'c2'
+        input.command.requestKey = 'k2'
+      }
+
+      const mutateAfterDispatch = <Result>(pending: Promise<Result>) => {
+        assert.equal(authorizationReads, 0)
+        mutate()
+        return pending
+      }
+      const fresh =
+        owner === 'managed'
+          ? await mutateAfterDispatch(execute(client, operation, input))
+          : await client.transaction((trx) => mutateAfterDispatch(executeIn(trx, operation, input)))
+
+      const identity = { actorId: original.actorId, scopeId: original.scopeId }
+      assert.deepEqual(fresh, { replayed: false, result: identity })
+      const receipts = await listReceipts(client)
+      assert.lengthOf(receipts, 1)
+      assert.include(receipts[0], {
+        operation: JSON.stringify([operation.name, original.actorId]),
+        scope_id: original.scopeId,
+        command_id: original.command.commandId,
+        request_key: original.command.requestKey,
+        state: 'completed',
+      })
+      const replay =
+        owner === 'managed'
+          ? await execute(client, operation, original)
+          : await client.transaction((trx) => executeIn(trx, operation, original))
+      assert.deepEqual(replay, { replayed: true, result: identity })
+      assert.deepEqual(accessIdentities, [identity, identity])
+      assert.equal(authorizationReads, 1)
+      assert.lengthOf(await listReceipts(client), 1)
+    })
+  }
+
   test('a throwing input getter releases the host transaction claim', async ({ assert }) => {
     const { client } = await createDatabase()
     const { operation } = makeNoteOperation()
