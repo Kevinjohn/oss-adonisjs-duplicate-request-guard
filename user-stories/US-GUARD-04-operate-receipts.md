@@ -59,7 +59,8 @@ flowchart TD
     K --> L["Acquire exclusive publication claim"]
     R -->|Other error| X["Rethrow before createCodemods"]
     R -->|No| L
-    L -->|Held by another run| X
+    L -->|Claim path already exists| Z["Throw publication claim error with rerun guidance"]
+    L -->|Other claim error| X
     L -->|Acquired| N{"Recursive readdir: an entry ending _create_request_receipts_table.ts that is not a regular file?"}
     N -->|Yes, including a symlink| Y["Throw naming the entry before createCodemods; finally removes claim"]
     N -->|No| C{"Lucid sourceFiles inventory, recursive: a script file named *_create_request_receipts_table?"}
@@ -70,8 +71,9 @@ flowchart TD
     E -->|Throws| P["finally removes claim; propagate error"]
     N -->|Directory inspection fails| P
     C -->|Directory inspection fails| P
+    T -->|Claim removal fails| W["Propagate filesystem error"]
     T --> F["Host runs Lucid migration; existing file does not prove application"]
-    G["execute, executeIn or pruneReceipts"] --> H["assertSupportedConnection"]
+    G["execute, executeIn, pruneReceipts or explicit host boot check"] --> H["assertSupportedConnection"]
     H --> I["Validate dialect, pool and resolved-file ownership"]
     I -->|Valid| J["Continue to operation"]
     I -->|Invalid| Q["E_UNSUPPORTED_DIALECT or E_UNSAFE_SQLITE_POOL"]

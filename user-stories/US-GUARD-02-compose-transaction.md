@@ -14,7 +14,7 @@ As a transaction owner, I want a deduplicated operation to share my transaction 
 - Inputs: `trx` (required; must be a transaction client on a supported connection), `operation` (an `Operation`), and `input` (`ExecuteInput`: `actorId`, `scopeId`, `payload`, `command`, optional `authorization`). Returns `Promise<Outcome<Result>>`, that is `{ replayed, result }`.
 - `execute` rejects transaction clients; `executeIn` rejects non-transaction clients (`E_TRANSACTION_OWNER`). Calling `execute` with a base connection inside another transaction is not detected as such and can instead time out acquiring the only pooled connection.
 - Each operation uses a savepoint on the caller transaction; nested `executeIn` is supported from the innermost operation authorisation callbacks/work.
-- Sibling calls, calls with lost async context and calls from a parent that has already returned fail immediately with `E_CONCURRENT_COMMAND`. A late nested call from a still-innermost closing or aborted frame, or a parent finishing with an open nested operation, fails with `E_UNAWAITED_NESTED_COMMAND`. Parent unwinding aborts and waits for children before rollback; a child that never settles keeps the parent waiting.
+- Sibling calls, calls with lost async context and calls from a parent that has already returned fail immediately with `E_CONCURRENT_COMMAND`. A late nested call from a still-innermost closing or aborted frame, or a parent finishing with an open nested operation, fails with `E_UNAWAITED_NESTED_COMMAND`. Parent unwinding marks every open descendant aborted and waits for its children to settle before rollback. It observes each aborted promise, including a grandchild that settles before its own parent unwinds. Awaiting an aborted call still rejects. A dropped failure that settled without an ancestor abort remains unhandled. A child that never settles keeps the parent waiting.
 - Authorisation callbacks and `work` must be database-only and safe to rerun if the transaction owner reruns its callback. Do not wrap either API in an independent retry loop.
 - Original SQLite transaction-abort errors propagate; failed savepoint cleanup is attached as `cause` when possible.
 - Host queries issued on `trx` while an operation is open are inside its savepoint and roll back if that operation fails.
@@ -49,12 +49,13 @@ flowchart TD
     V -->|Error before savepoint| Z["Propagate; release frame"]
     V --> D["SAVEPOINT; authorizeAccess; reserve and execute/replay"]
     D -->|SAVEPOINT creation fails| Z
-    D --> E{"Children settled and operation done?"}
+    D --> E{"Operation succeeds and assertSettled accepts the frame?"}
     E -->|Yes| F["RELEASE SAVEPOINT; release frame; return provisional result"]
     F -->|Release fails| G
-    E -->|Failure/unwind| G["abortChildren; wait; attempt rollback and release savepoint"]
-    G --> Z
+    E -->|Failure/unwind| G["abortChildren marks open descendants aborted and observes their promises"]
+    G --> Q["Wait for child runs, attach first child error when possible, then attempt savepoint rollback and release"]
+    Q --> Z
     C -->|Sibling, lost context or late child| H["Concurrency or unawaited error immediately"]
 ```
 
-**Code references:** [executeIn](../src/receipts.ts#L433), [savepoint and nested execution](../src/receipts.ts#L536), [Operation](../src/types.ts#L41), [ExecuteInput](../src/types.ts#L56)
+**Code references:** [executeIn](../src/receipts.ts#L435), [descendant abort](../src/receipts.ts#L378), [savepoint and nested execution](../src/receipts.ts#L517), [Operation](../src/types.ts#L41), [ExecuteInput](../src/types.ts#L56)

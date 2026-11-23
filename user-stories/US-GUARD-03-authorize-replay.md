@@ -16,7 +16,7 @@ As an operation caller, I want request deduplication to check current access bef
 - `parseAuthorization` and `authorizeExecute` apply only to a fresh reservation; they are not rerun during replay.
 - Another actor using the same client IDs is in a separate namespace and learns nothing about the first actor’s result.
 
-- The optional replay callback receives the current operation context and a separate parsed copy of the stored result. Mutating that copy does not change the result returned to the caller. When the callback is omitted, successful current access suffices. The opaque fresh authorisation is never read on the replay branch. See [optional authorisation callback combinations](../tests/optional_authorization_callbacks.spec.ts) and the [replay branch](../src/receipts.ts#L638).
+- The optional replay callback receives the current operation context and a separate parsed copy of the stored result. Mutating that copy does not change the result returned to the caller. When the callback is omitted, successful current access suffices. The opaque fresh authorisation is never read on the replay branch. See [optional authorisation callback combinations](../tests/optional_authorization_callbacks.spec.ts) and the [replay branch](../src/receipts.ts#L640).
 
 ## User flow
 
@@ -44,9 +44,12 @@ Scope: package operation path; caller authentication, HTTP response shaping, and
 flowchart TD
     A["execute or executeIn reaches runClaimed through executeInTransaction"] --> V["Bind live driver and take writer lock; validate identity and hash scope/payload"]
     V -->|Error| X["Reject before callback"]
-    V --> A2["Open SAVEPOINT; call authorizeAccess"]
-    A2 -->|Denied| Z["rollback savepoint; rethrow; no receipt change"]
+    V --> S2["Open SAVEPOINT"]
+    S2 -->|Fails| X
+    S2 --> A2["Call authorizeAccess"]
+    A2 -->|Denied| Z["Abort and await children; attempt rollback; rethrow"]
     A2 --> B["reserveAndRun attempts INSERT pending receipt"]
+    B -->|Insert errors| Z
     B -->|Insert succeeds| N["Fresh operation path; see US-GUARD-01"]
     B -->|Insert skipped| C["Find same namespace; verify command ID, request key and payload hash"]
     C -->|No matching row| S["ReceiptSchemaException"]
@@ -59,6 +62,8 @@ flowchart TD
     G --> H["Parse stored result anew; create replayed=true outcome"]
     H --> T["assertSettled; release savepoint; return outcome to owner"]
     T -->|Error| Z
+    T -->|Success on execute| O["Lucid commits and returns outcome, or propagates a commit error"]
+    T -->|Success on executeIn| P["Return provisional outcome to host transaction owner"]
 ```
 
-**Code references:** [authorisation callback order](../README.md#use), [replay branch](../src/receipts.ts#L638), [namespace construction](../src/receipts.ts#L534), [refusal rollback](../src/receipts.ts#L553)
+**Code references:** [authorisation callback order](../README.md#use), [replay branch](../src/receipts.ts#L640), [namespace construction](../src/receipts.ts#L529), [refusal rollback](../src/receipts.ts#L555)

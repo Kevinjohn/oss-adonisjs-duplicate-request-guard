@@ -49,8 +49,9 @@ flowchart TD
     F --> G{"Liveness check or statement failure?"}
     G -->|Before savepoint opens| E2["Propagate error; release frame"]
     G -->|After savepoint opens| H["Unwind children; attempt savepoint cleanup; preserve original error; release frame"]
-    G -->|None| I["Release savepoint and frame; return provisional outcome"]
-    I -->|Savepoint release fails| H
+    G -->|None| I["Release savepoint"]
+    I -->|Fails| H
+    I -->|Succeeds| J["Release frame; return provisional outcome"]
 ```
 
 **Code references:** [bindAndAssertOpenTransaction](../src/receipts.ts#L315), [runClaimed](../src/receipts.ts#L515), [TransactionLostException](../src/errors.ts#L146).
