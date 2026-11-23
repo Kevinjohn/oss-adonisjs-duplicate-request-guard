@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## 0.2.2 - 2026-11-23
+
+- Test against Account Kit 0.5.2.
 - Changed: correction to 0.2.0, whose entry omitted two behaviour changes. Configure takes an
   exclusive publication claim, a temporary `.request-receipts-configure.lock` directory in the
   migrations directory, so a simultaneous configure fails and must be rerun. A nested `executeIn`
