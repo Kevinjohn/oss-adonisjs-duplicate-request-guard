@@ -25,7 +25,8 @@ directory, move the file into one of those paths, or add the directory to them, 
 Since v0.2.0, concurrent configure publication is exclusive. If a simultaneous
 configure fails because another process owns publication, let the first finish then rerun.
 If configure stops unexpectedly, check that no configure is still running before removing its
-empty `.request-receipts-configure.lock` directory. The lock is temporary; migration names and
+empty `.request-receipts-configure.lock` directory in the migrations directory; the error names
+its full path. The lock is temporary; migration names and
 contents are unchanged.
 
 Peers: `@adonisjs/core` ^7.0.0, `@adonisjs/lucid` ^22.0.0. Node >= 24. Each release lists its
