@@ -126,9 +126,12 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
   nested operation whose `work` never settles keeps its parent waiting. The abort reaches every open
   operation nested below as well. Once an operation starts to complete, replay or unwind, or is aborted,
   it accepts no new nested operation: a late call from its context gets `E_UNAWAITED_NESTED_COMMAND`,
-  since it would outlive the operation that should have awaited it. Since v0.2.0,
-  the package internally observes nested rejections so a dropped child promise does not additionally
-  cause an unhandled rejection. Awaiting the child still rejects; callers must await nested work.
+  since it would outlive the operation that should have awaited it. When a parent fails because of
+  a nested operation that was still open, and so reports it as `cause`, the package observes that
+  nested promise, so dropping it does not additionally cause an unhandled rejection. A dropped nested
+  operation that fails and settles before its parent finishes is reported by nobody: its rejection
+  stays unhandled, as in v0.1.3, and the parent can still complete. Awaiting the child still
+  rejects; callers must await nested work.
 - **Original errors.** If SQLite already rolled back the whole transaction (`INSERT OR ROLLBACK`, a
   busy abort), the original error, such as `SQLITE_BUSY`, is rethrown; the failed savepoint cleanup
   is attached as its `cause` when it has none. That transaction is over even though Lucid still

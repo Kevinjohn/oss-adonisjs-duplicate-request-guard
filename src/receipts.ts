@@ -215,6 +215,8 @@ interface Frame {
   connection?: DriverConnection
   /** This operation's run, settled before its parent may roll back. */
   run?: Promise<unknown>
+  /** The promise a nested `executeIn` returned to its caller, observed once its parent reports it. */
+  returned?: Promise<unknown>
 }
 
 /** The current operation, carried through its authorisation callbacks and `work` by AsyncLocalStorage. */
@@ -377,7 +379,12 @@ function markFrameAborted(frame: Frame) {
  */
 async function abortChildren(frame: Frame) {
   const openChildFrames = listOpenChildFrames(frame)
-  for (const child of openChildFrames) markFrameAborted(child)
+  for (const child of openChildFrames) {
+    markFrameAborted(child)
+    // This operation's failure reports the child, so a caller that dropped its promise does not
+    // also get an unhandled rejection. A child no parent reports keeps its rejection unhandled.
+    void child.returned?.catch(() => {})
+  }
   internalHooks.onUnwind?.()
   const childRunResults = await Promise.allSettled(openChildFrames.map((child) => child.run))
   return childRunResults.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []))
@@ -418,11 +425,18 @@ export function executeIn<Payload, Authorization, Result>(
   operation: Operation<Payload, Authorization, Result>,
   input: ExecuteInput<Payload>
 ): Promise<Outcome<Result>> {
-  const nested = commandFrame.getStore()?.trx === trx
-  const run = executeInTransaction(trx, operation, () => snapshotInput(input))
-  // A parent already waits for and reports failure of an outstanding nested operation.
-  // Observe the actual returned promise without changing the rejection callers await.
-  if (nested) void run.catch(() => {})
+  let claimed: Frame | undefined
+  const run = executeInTransaction(
+    trx,
+    operation,
+    () => snapshotInput(input),
+    (frame) => {
+      claimed = frame
+    }
+  )
+  // The claim is synchronous. A nested operation's parent observes this promise only when it
+  // reports the operation as its own failure's cause; awaiting callers see the same rejection.
+  if (claimed?.parent) claimed.returned = run
   return run
 }
 
@@ -443,13 +457,15 @@ function snapshotInput<Payload>(input: ExecuteInput<Payload>): ExecuteInput<Payl
 async function executeInTransaction<Payload, Authorization, Result>(
   trx: TransactionClientContract,
   operation: Operation<Payload, Authorization, Result>,
-  admitInput: () => ExecuteInput<Payload>
+  admitInput: () => ExecuteInput<Payload>,
+  onClaimed?: (frame: Frame) => void
 ): Promise<Outcome<Result>> {
   if (!trx.isTransaction) {
     throw new TransactionOwnerException('executeIn requires a transaction client')
   }
   assertSupportedConnection(trx)
   const frame = claimCommandFrame(trx)
+  onClaimed?.(frame)
   try {
     const admitted = admitInput()
     // The one outcome both observers see: this call's caller and an unwinding parent, which attaches
