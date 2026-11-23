@@ -100,7 +100,11 @@ test.group('completion', () => {
     await assert.rejects(
       () =>
         client.transaction((trx) =>
-          completeReceipt(trx, JSON.stringify(['notes.add', 'alice']), 'c1', '{"noteId":99}')
+          completeReceipt(trx, {
+            namespace: JSON.stringify(['notes.add', 'alice']),
+            commandId: 'c1',
+            serialized: '{"noteId":99}',
+          })
         ),
       errors.ReceiptNotPendingException
     )
@@ -113,7 +117,11 @@ test.group('completion', () => {
     await assert.rejects(
       () =>
         client.transaction((trx) =>
-          completeReceipt(trx, JSON.stringify(['notes.add', 'alice']), 'missing', '{}')
+          completeReceipt(trx, {
+            namespace: JSON.stringify(['notes.add', 'alice']),
+            commandId: 'missing',
+            serialized: '{}',
+          })
         ),
       errors.ReceiptNotPendingException
     )

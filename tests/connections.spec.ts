@@ -188,6 +188,21 @@ test.group('shared SQLite file detection', () => {
     }
   })
 
+  test('a path that cannot be inspected surfaces its error and is not registered', async ({
+    assert,
+  }) => {
+    const { file } = await createDatabase()
+    // The existing database file used as a directory: the path exists, it is not just missing.
+    const unreachable = join(file, 'nested.sqlite3')
+    const db = openTestDatabase(unreachable)
+    try {
+      assert.throws(() => assertSupportedConnection(db.connection()), /^ENOTDIR\b/)
+      assert.isFalse(writersByDatabasePath.has(join(realpathSync(file), 'nested.sqlite3')))
+    } finally {
+      await db.manager.closeAll()
+    }
+  })
+
   test(':memory: databases are separate and never refused, even open side by side', async ({
     assert,
   }) => {

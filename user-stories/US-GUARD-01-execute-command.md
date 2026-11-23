@@ -56,9 +56,12 @@ Scope: package operation path; caller authentication, HTTP response shaping, and
 
 ```mermaid
 flowchart TD
-    A["execute(client, operation, input)"] --> B["Reject transaction client; assertSupportedConnection; open transaction"]
-    B -->|Refused or transaction open fails| X2["Propagate error"]
-    B --> C["executeIn validates connection and claims frame"]
+    A["execute(client, operation, input)"] --> B["Reject transaction client; assertSupportedConnection"]
+    B -->|Refused| X2["Propagate error"]
+    B --> B2["snapshotInput copies the receipt identity before the transaction is requested"]
+    B2 --> B3["client.transaction opens the managed transaction"]
+    B3 -->|Transaction open fails| X2
+    B3 --> C["executeInTransaction validates connection and claims frame"]
     C -->|Admission error| T
     C --> V["bindAndAssertOpenTransaction; no-op UPDATE takes writer lock"]
     V --> D["Hash scope/payload, assertIdentity, derive namespace; open SAVEPOINT"]
@@ -73,7 +76,7 @@ flowchart TD
     S --> Y
     G -->|Mismatch or pending| X["conflict or in-progress error"]
     G -->|Completed and matching| L["authorizeReplay if provided; build replayed=true outcome"]
-    F -->|Yes| H["parseAuthorization; authorizeExecute; work"]
+    F -->|Yes| H["parseAuthorization (fresh-only parsing); authorizeExecute (transactional authorisation callback); work (the write)"]
     H --> I["completeReceipt requires one pending row"]
     I --> J["Build replayed=false outcome"]
     L --> K["assertSettled; release savepoint"]
@@ -88,4 +91,4 @@ flowchart TD
     Y --> T
 ```
 
-**Code references:** [API](../index.ts), [execute](../src/receipts.ts#L636), [Operation](../src/types.ts#L38)
+**Code references:** [API](../index.ts), [execute](../src/receipts.ts#L693), [Operation](../src/types.ts#L41)

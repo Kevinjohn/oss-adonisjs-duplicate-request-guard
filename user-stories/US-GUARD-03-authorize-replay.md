@@ -16,7 +16,7 @@ As an operation caller, I want request deduplication to check current access bef
 - `parseAuthorization` and `authorizeExecute` apply only to a fresh reservation; they are not rerun during replay.
 - Another actor using the same client IDs is in a separate namespace and learns nothing about the first actor’s result.
 
-- The optional replay callback receives the current operation context and a separate parsed copy of the stored result. Mutating that copy does not change the result returned to the caller. When the callback is omitted, successful current access suffices. The opaque fresh authorisation is never read on the replay branch. See [optional authorisation callback combinations](../tests/optional_policies.spec.ts) and the [replay branch](../src/receipts.ts#L606).
+- The optional replay callback receives the current operation context and a separate parsed copy of the stored result. Mutating that copy does not change the result returned to the caller. When the callback is omitted, successful current access suffices. The opaque fresh authorisation is never read on the replay branch. See [optional authorisation callback combinations](../tests/optional_policies.spec.ts) and the [replay branch](../src/receipts.ts#L638).
 
 ## User flow
 
@@ -61,4 +61,4 @@ flowchart TD
     T -->|Error| Z
 ```
 
-**Code references:** [authorisation callback order](../README.md#use), [replay branch](../src/receipts.ts#L607), [namespace construction](../src/receipts.ts#L488), [refusal rollback](../src/receipts.ts#L525)
+**Code references:** [authorisation callback order](../README.md#use), [replay branch](../src/receipts.ts#L638), [namespace construction](../src/receipts.ts#L534), [refusal rollback](../src/receipts.ts#L553)

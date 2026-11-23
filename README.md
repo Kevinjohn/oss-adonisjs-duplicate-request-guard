@@ -124,7 +124,9 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
   and `work`), and anything it wrote stays inside the parent's savepoint, so the rollback removes
   it: no note without a receipt, and a retry runs once. The parent rethrows its own error with the
   nested `E_UNAWAITED_NESTED_COMMAND` as `cause`: the same error the nested call rejects with, whose
-  own `cause` is the nested callback's error when it threw one. Committing afterwards is safe. A
+  own `cause` is the nested callback's error when it threw one. A parent error that already has a
+  `cause`, or a thrown value that cannot carry one (not an `Error`, frozen, or with a read-only
+  `cause`), is rethrown as it is. Committing afterwards is safe. A
   nested operation whose `work` never settles keeps its parent waiting. The abort reaches every open
   operation nested below as well. Once an operation starts to complete, replay or unwind, or is aborted,
   it accepts no new nested operation: a late call from its context gets `E_UNAWAITED_NESTED_COMMAND`,
