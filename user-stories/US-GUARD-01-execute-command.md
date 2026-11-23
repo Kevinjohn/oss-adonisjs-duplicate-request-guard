@@ -11,17 +11,17 @@ As an operation caller, I want to submit an operation with a stable identity so 
 
 ## Acceptance criteria
 
-| Input                                     | API parameter                | Required/default/conditions                                                                                                                                                                   |
-| ----------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `actorId`, `scopeId`                      | String-typed identity values | Required by `ExecuteInput`; host derives identity and scope from trusted authentication and authorisation. No additional nonempty-string runtime check is promised.                           |
-| `command.commandId`, `command.requestKey` | Client command identity      | Both required; must be well-formed Unicode strings. Preserve the pair on a retry. Operation name plus actor forms a separate receipt namespace.                                               |
-| `payload`                                 | Operation payload            | Required JSON value; scope and payload are hashed together. Objects must be plain; arrays and finite numbers are allowed.                                                                     |
-| `authorization`                           | Opaque optional input        | Parsed only for fresh reservations when `parseAuthorization` exists; omitted parser supplies `undefined`. A non-optional authorization type requires a parser in the public `Operation` type. |
+| Input                                     | API parameter                | Required/default/conditions                                                                                                                                                                     |
+| ----------------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `actorId`, `scopeId`                      | String-typed identity values | Required by `ExecuteInput`; host derives identity and scope from trusted authentication and authorisation. No additional nonempty-string runtime check is promised.                             |
+| `command.commandId`, `command.requestKey` | Client command identity      | Both required; must be well-formed Unicode strings. Preserve the pair on a retry. Operation name plus actor forms a separate receipt namespace.                                                 |
+| `payload`                                 | Operation payload            | Required JSON value; scope and payload are hashed together. Objects must be plain; arrays and finite numbers are allowed.                                                                       |
+| `authorization`                           | Opaque optional input        | Parsed only for fresh reservations when `parseAuthorization` exists; omitted parser supplies `undefined`. A non-optional `Authorization` type requires a parser in the public `Operation` type. |
 
 - The package first acquires SQLite's writer lock, then validates payload/scope JSON and both command identifiers before any authorisation callback; `authorizeAccess` is the first authorisation callback and runs before reservation. Invalid payloads do not commit a receipt.
 - `Operation` requires `name`, `authorizeAccess`, and `work`; omitted execute/replay authorisation callbacks allow their respective path. Use only the provided `trx` for database changes.
 - A fresh reservation parses optional opaque authorisation, runs execute authorisation, calls `work`, and stores a plain JSON result in the same transaction. `execute` opens one transaction and does not retry automatically.
-- Matching completed identity returns the stored JSON-equal result with `replayed: true`; mismatched key/command/payload conflicts, re-entering the same pending operation from `work` or `authorizeExecute` (both run after the pending insert) reports in-progress, and any fresh-path failure rolls back receipt and writes.
+- Matching completed identity returns the stored JSON-equal result with `replayed: true`; a mismatched request key, command ID or payload conflicts, re-entering the same pending operation from `work` or `authorizeExecute` (both run after the pending insert) reports in-progress, and any fresh-path failure rolls back receipt and writes.
 - Non-JSON values (including cycles, dates, non-finite numbers, symbols and class instances) are refused; `-0` replays as `0`.
 
 - Preserve both command identifiers on retries. Property order does not change the payload hash, while a changed scope or JSON value conflicts within the same operation and actor. Keep the payload unchanged until the call settles. Invalid input raises `E_INVALID_COMMAND_VALUE`; an invalid work result raises `E_INVALID_COMMAND_RESULT` and rolls back the work. See [identity cases](../tests/identity.spec.ts) and [JSON value cases](../tests/values.spec.ts).
@@ -56,9 +56,12 @@ Scope: package operation path; caller authentication, HTTP response shaping, and
 
 ```mermaid
 flowchart TD
-    A["execute(client, operation, input)"] --> B["Reject transaction client; assertSupportedConnection; open transaction"]
-    B -->|Refused or transaction open fails| X2["Propagate error"]
-    B --> C["executeIn validates connection and claims frame"]
+    A["execute(client, operation, input)"] --> B["Reject transaction client; assertSupportedConnection"]
+    B -->|Refused| X2["Propagate error"]
+    B --> B2["snapshotInput copies the receipt identity before the transaction is requested"]
+    B2 --> B3["client.transaction opens the managed transaction"]
+    B3 -->|Transaction open fails| X2
+    B3 --> C["executeInTransaction validates connection and claims frame"]
     C -->|Admission error| T
     C --> V["bindAndAssertOpenTransaction; no-op UPDATE takes writer lock"]
     V --> D["Hash scope/payload, assertIdentity, derive namespace; open SAVEPOINT"]
@@ -73,7 +76,7 @@ flowchart TD
     S --> Y
     G -->|Mismatch or pending| X["conflict or in-progress error"]
     G -->|Completed and matching| L["authorizeReplay if provided; build replayed=true outcome"]
-    F -->|Yes| H["parseAuthorization; authorizeExecute; work"]
+    F -->|Yes| H["parseAuthorization (fresh-only parsing); authorizeExecute (transactional authorisation callback); work (the write)"]
     H --> I["completeReceipt requires one pending row"]
     I --> J["Build replayed=false outcome"]
     L --> K["assertSettled; release savepoint"]
@@ -88,4 +91,4 @@ flowchart TD
     Y --> T
 ```
 
-**Code references:** [API](../index.ts), [execute](../src/receipts.ts#L636), [Operation](../src/types.ts#L38)
+**Code references:** [API](../index.ts), [execute](../src/receipts.ts#L693), [Operation](../src/types.ts#L41)

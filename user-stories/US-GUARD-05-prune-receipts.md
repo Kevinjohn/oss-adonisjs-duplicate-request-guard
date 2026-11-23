@@ -6,13 +6,13 @@ As an application operator, I want to prune completed receipts only after client
 **Access:** Host scheduler/operator with a supported better-sqlite3 connection and authority to choose retention.
 **Entry:** `pruneReceipts(client, { olderThan })`; no package scheduler or Ace pruning command is provided.
 **Documentation:** [Pruning contract](../README.md#contracts).
-**Source:** [pruneReceipts](../src/receipts.ts#L654).
+**Source:** [pruneReceipts](../src/receipts.ts#L714).
 **Coverage:** [Prune tests](../tests/prune.spec.ts).
 
 ## Acceptance criteria
 
 - `olderThan` is a required JavaScript `Date` supplied by the host. No retention default exists; choose it based on the maximum client retry horizon.
-- Only completed receipts last updated strictly before the cutoff are deleted; retention counts from completion rather than reservation. For a UTC year above 9999, all completed receipts qualify. A cutoff before year zero removes none. See the [cutoff boundary tests](../tests/identity.spec.ts#L223). Pending and equal-cutoff rows remain.
+- Only completed receipts last updated strictly before the cutoff are deleted; retention counts from completion rather than reservation. For a UTC year above 9999, all completed receipts qualify. A cutoff before year zero removes none. See the [retention and cutoff boundary tests](../tests/identity.spec.ts#L306-L363). Pending and equal-cutoff rows remain.
 - The method returns the deleted-row count. A later call using a deleted identity executes fresh and can apply the operation again.
 - Supported-connection checks apply before deletion; database and invalid date failures propagate. Host owns scheduling and any surrounding transaction.
 
@@ -24,7 +24,7 @@ flowchart TD
     B --> C{"Deletion succeeds?"}
     C -->|No| D["Observe failure and correct before retry"]
     C -->|Yes| E["Receive removed-row count"]
-    E --> F["Deleted command identities may execute fresh later"]
+    E --> F["Deleted receipt identities may execute fresh later"]
 ```
 
 ## Code flow
@@ -46,4 +46,4 @@ flowchart TD
     E -->|Error| X
 ```
 
-**Code references:** [pruneReceipts](../src/receipts.ts#L654), [PruneOptions](../src/types.ts#L77), [pruning tests](../tests/prune.spec.ts).
+**Code references:** [pruneReceipts](../src/receipts.ts#L714), [PruneOptions](../src/types.ts#L80), [pruning tests](../tests/prune.spec.ts).

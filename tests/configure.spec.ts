@@ -151,7 +151,13 @@ test('simultaneous configure publication is exclusive and a later run preserves 
   const first = configure(command)
   try {
     await publishing.fired
-    await assert.rejects(() => configure(command), /publication is already claimed/)
+    const lockPath = join(migrationsPath, '.request-receipts-configure.lock')
+    await assert.rejects(
+      () => configure(command),
+      new RegExp(
+        `^request receipts migration publication is already claimed; .* Lock directory: ${lockPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`
+      )
+    )
     proceed.fire()
     await first
     const files = await readdir(migrationsPath)

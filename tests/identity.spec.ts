@@ -236,7 +236,7 @@ test.group('identity, ordering and retention rules', () => {
     assert.instanceOf(reentry, errors.DuplicateRequestConflictException)
   })
 
-  test('the same identity under another actor or operation is a separate command', async ({
+  test('the same identity under another actor or operation is a separate receipt', async ({
     assert,
   }) => {
     const { client } = await createDatabase()

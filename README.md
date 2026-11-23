@@ -20,21 +20,23 @@ node ace migration:run
 `configure` writes the migration to the app's migrations directory (`app.migrationsPath()`,
 `database/migrations` by default). If a connection sets its own `migrations.paths` without that
 directory, move the file into one of those paths, or add the directory to them, before
-`migration:run`. Configure recognizes regular receipts migrations in this directory and its subdirectories. If configure reports a matching symlink or other non-file entry, replace it with a regular migration file or remove it before rerunning.
+`migration:run`. Configure recognises regular receipts migrations in this directory and its subdirectories. If configure reports a matching symlink or other non-file entry, replace it with a regular migration file or remove it before rerunning.
 
 Since v0.2.0, concurrent configure publication is exclusive. If a simultaneous
 configure fails because another process owns publication, let the first finish then rerun.
 If configure stops unexpectedly, check that no configure is still running before removing its
-empty `.request-receipts-configure.lock` directory. The lock is temporary; migration names and
+empty `.request-receipts-configure.lock` directory in the migrations directory; the error names
+its full path. The lock is temporary; migration names and
 contents are unchanged.
 
 Peers: `@adonisjs/core` ^7.0.0, `@adonisjs/lucid` ^22.0.0. Node >= 24. Each release lists its
 archive's SHA-256.
 
 The configure hook uses Core's `makeUsingStub`, not an Assembler code transformer, so this package
-does not declare an Assembler peer. Clean packed-candidate consumers have configured twice,
-run the migration and replayed a v0.1.3 receipt without Assembler on Core 7.0.0/Lucid 22.0.0
-and Core 7.6.0/Lucid 22.4.2.
+does not declare an Assembler peer. On every pull request a clean packed-candidate consumer
+configures twice, runs the migration and replays a v0.1.3 receipt without Assembler: the `checks`
+workflow runs it on Core 7.6.0/Lucid 22.4.2 and the `minimum peers` workflow on Core 7.0.0/Lucid
+22.0.0.
 
 ## User stories
 
@@ -87,7 +89,7 @@ role against the stored result before returning it.
 For a protected operation, pass the client's authorisation through untouched. Put single-use
 proof parsing in `parseAuthorization` and proof consumption in `authorizeExecute`, before the
 write and inside the same transaction. Neither runs on replay. If `parseAuthorization` is
-omitted, its authorization type must admit `undefined`; the authorization input is then ignored.
+omitted, its `Authorization` type must admit `undefined`; the `authorization` input is then ignored.
 Both `authorizeReplay` and `authorizeExecute` are optional and throw to refuse their path.
 
 The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh: `parseAuthorization`
@@ -122,13 +124,18 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
   and `work`), and anything it wrote stays inside the parent's savepoint, so the rollback removes
   it: no note without a receipt, and a retry runs once. The parent rethrows its own error with the
   nested `E_UNAWAITED_NESTED_COMMAND` as `cause`: the same error the nested call rejects with, whose
-  own `cause` is the nested callback's error when it threw one. Committing afterwards is safe. A
+  own `cause` is the nested callback's error when it threw one. A parent error that already has a
+  `cause`, or a thrown value that cannot carry one (not an `Error`, frozen, or with a read-only
+  `cause`), is rethrown as it is. Committing afterwards is safe. A
   nested operation whose `work` never settles keeps its parent waiting. The abort reaches every open
   operation nested below as well. Once an operation starts to complete, replay or unwind, or is aborted,
   it accepts no new nested operation: a late call from its context gets `E_UNAWAITED_NESTED_COMMAND`,
-  since it would outlive the operation that should have awaited it. Since v0.2.0,
-  the package internally observes nested rejections so a dropped child promise does not additionally
-  cause an unhandled rejection. Awaiting the child still rejects; callers must await nested work.
+  since it would outlive the operation that should have awaited it. When a parent fails because of
+  a nested operation that was still open, and so reports it as `cause`, the package observes that
+  nested promise, so dropping it does not additionally cause an unhandled rejection. A dropped nested
+  operation that fails and settles before its parent finishes is reported by nobody: its rejection
+  stays unhandled, as in v0.1.3, and the parent can still complete. Awaiting the child still
+  rejects; callers must await nested work.
 - **Original errors.** If SQLite already rolled back the whole transaction (`INSERT OR ROLLBACK`, a
   busy abort), the original error, such as `SQLITE_BUSY`, is rethrown; the failed savepoint cleanup
   is attached as its `cause` when it has none. That transaction is over even though Lucid still

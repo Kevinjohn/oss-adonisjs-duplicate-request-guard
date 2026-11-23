@@ -40,7 +40,7 @@ export async function configure(command: Configure) {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
     throw new RuntimeException(
-      'request receipts migration publication is already claimed; wait for configure to finish and rerun. If it stopped unexpectedly, remove the empty .request-receipts-configure.lock directory before rerunning.'
+      `request receipts migration publication is already claimed; wait for configure to finish and rerun. If it stopped unexpectedly, remove the empty .request-receipts-configure.lock directory before rerunning. Lock directory: ${claim}`
     )
   }
   try {

@@ -24,8 +24,8 @@ async function prepareLostTransactionFixture() {
   return client
 }
 
-test.group('a transaction SQLite already ended runs no further command', () => {
-  test('a command after one that lost the transaction is refused and commits nothing', async ({
+test.group('a transaction SQLite already ended runs no further operation', () => {
+  test('an operation after one that lost the transaction is refused and commits nothing', async ({
     assert,
   }) => {
     const client = await prepareLostTransactionFixture()
@@ -49,7 +49,9 @@ test.group('a transaction SQLite already ended runs no further command', () => {
     assert.equal(await countRows(client, 'notes'), 1)
   })
 
-  test('a command after a host query that ended the transaction is refused', async ({ assert }) => {
+  test('an operation after a host query that ended the transaction is refused', async ({
+    assert,
+  }) => {
     const client = await prepareLostTransactionFixture()
     const { operation, calls } = makeNoteOperation()
     const trx = await client.transaction()
@@ -60,7 +62,7 @@ test.group('a transaction SQLite already ended runs no further command', () => {
       )
       assert.equal(outcome, 'E_TRANSACTION_LOST')
       // Refused for good: a host savepoint makes the driver report a transaction again, and
-      // releasing a command's savepoint inside it would still commit.
+      // releasing an operation's savepoint inside it would still commit.
       await trx.rawQuery('SAVEPOINT host')
       assert.equal(
         await executeIn(trx, operation, makeAuthorizedOperationInput(1)).catch(readOutcomeCode),
@@ -97,8 +99,8 @@ test.group('a transaction SQLite already ended runs no further command', () => {
 })
 
 test.group('a lost transaction is lost for every client on its connection', () => {
-  for (const loser of ['a command', 'a host query'] as const) {
-    test(`a child transaction opened after ${loser} lost it runs no command`, async ({
+  for (const loser of ['an operation', 'a host query'] as const) {
+    test(`a child transaction opened after ${loser} lost it runs no operation`, async ({
       assert,
     }) => {
       const client = await prepareLostTransactionFixture()
@@ -106,12 +108,12 @@ test.group('a lost transaction is lost for every client on its connection', () =
       assertSupportedConnection(client)
       const trx = await client.transaction()
       try {
-        if (loser === 'a command') {
+        if (loser === 'an operation') {
           hooks.afterWork = (context) => endTransaction(context.trx)
           await executeIn(trx, operation, makeAuthorizedOperationInput(1)).catch(() => null)
           hooks.afterWork = undefined
         } else {
-          // No command sees this: the watcher armed by the boot-time check does.
+          // No operation sees this: the watcher armed by the boot-time check does.
           await endTransaction(trx).catch(() => null)
         }
         // The child's savepoint reopens a transaction, so the driver reports one again.
@@ -127,14 +129,14 @@ test.group('a lost transaction is lost for every client on its connection', () =
     })
   }
 
-  test('a watcher armed mid-transaction by a first command still sees a later host query', async ({
+  test('a watcher armed mid-transaction by a first operation still sees a later host query', async ({
     assert,
   }) => {
     const client = await prepareLostTransactionFixture()
     const { operation } = makeNoteOperation()
     const trx = await client.transaction()
     try {
-      // The first guarded call on this connection happens with the transaction already open.
+      // The first deduplicated call on this connection happens with the transaction already open.
       await executeIn(trx, operation, makeAuthorizedOperationInput(1))
       await endTransaction(trx).catch(() => null)
       const outcome = await trx
@@ -148,7 +150,7 @@ test.group('a lost transaction is lost for every client on its connection', () =
     assert.equal(await countRows(client, 'notes'), 1)
   })
 
-  test('a parent that swallows the loss cannot run a command in a child transaction', async ({
+  test('a parent that swallows the loss cannot run an operation in a child transaction', async ({
     assert,
   }) => {
     const client = await prepareLostTransactionFixture()
@@ -202,7 +204,7 @@ test.group('a lost transaction is lost for every client on its connection', () =
     assert.equal(await countRows(client, 'notes'), 2)
   })
 
-  test('the next transaction on the connection runs commands again', async ({ assert }) => {
+  test('the next transaction on the connection runs operations again', async ({ assert }) => {
     const client = await prepareLostTransactionFixture()
     const { operation, hooks } = makeNoteOperation()
     hooks.afterWork = ({ trx }) => endTransaction(trx)
@@ -221,7 +223,7 @@ test.group('a lost transaction is lost for every client on its connection', () =
 })
 
 test.group('only the transaction that was lost is refused', () => {
-  test('a command on a completed transaction is refused without spoiling the next one', async ({
+  test('an operation on a completed transaction is refused without spoiling the next one', async ({
     assert,
   }) => {
     const client = await prepareLostTransactionFixture()
@@ -239,9 +241,9 @@ test.group('only the transaction that was lost is refused', () => {
   })
 
   // The pool has one connection, so a waiting transaction gets it the moment `done` releases it.
-  // The late command checks that connection some microtasks later, wherever that falls.
+  // The late operation checks that connection some microtasks later, wherever that falls.
   for (const ticks of Array.from({ length: 30 }, (_, i) => i)) {
-    test(`a command ${ticks} ticks after its transaction completed does not spoil a waiting one`, async ({
+    test(`an operation ${ticks} ticks after its transaction completed does not spoil a waiting one`, async ({
       assert,
     }) => {
       const client = await prepareLostTransactionFixture()
@@ -330,7 +332,9 @@ test.group('ordinary query failures do not lose a transaction', () => {
 })
 
 test.group('annotating the error never skips the rollback', () => {
-  test('an error whose cause accessor throws still rolls the command back', async ({ assert }) => {
+  test('an error whose cause accessor throws still rolls the operation back', async ({
+    assert,
+  }) => {
     const { client } = await createDatabase()
     for (const sequenceNumber of [1, 2]) await addProof(client, `p${sequenceNumber}`)
     const { operation, hooks } = makeNoteOperation()

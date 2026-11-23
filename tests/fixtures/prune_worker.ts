@@ -9,7 +9,7 @@ import { pruneReceipts } from '../../index.js'
 const { file, stop, flight } = workerData as {
   file: string
   stop: Int32Array
-  /** [work started, work finished] counters kept by the parent around guarded work. */
+  /** [work started, work finished] counters kept by the parent around deduplicated work. */
   flight: Int32Array
 }
 const app = new AppFactory().create(new URL('file:///tmp/'), () => {})
@@ -30,7 +30,7 @@ while (Atomics.load(stop, 0) === 0) {
   const startedBefore = Atomics.load(flight, 0)
   const finishedBefore = Atomics.load(flight, 1)
   deleted += await pruneReceipts(db.connection(), { olderThan: new Date('2100-01-01T00:00:00Z') })
-  // Guarded work was in flight when this prune was issued, or started/finished while it ran.
+  // Deduplicated work was in flight when this prune was issued, or started/finished while it ran.
   if (
     startedBefore > finishedBefore ||
     Atomics.load(flight, 0) !== startedBefore ||

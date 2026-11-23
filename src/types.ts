@@ -6,7 +6,7 @@ export interface CommandIdentity {
   requestKey: string
 }
 
-/** What every authorisation callback and the work callback receive. Use only `trx` for database access. */
+/** What the authorisation callbacks and `work` receive. Use only `trx` for database access. */
 export interface OperationContext<Payload> {
   actorId: string
   scopeId: string
@@ -21,19 +21,22 @@ interface OperationCallbacks<Payload, Authorization, Result> {
   authorizeAccess(context: OperationContext<Payload>): Promise<void> | void
   /** Runs on every replay, with the stored result. Omitted means allow the replay. */
   authorizeReplay?(context: OperationContext<Payload>, result: Result): Promise<void> | void
-  /** Runs after parsing on fresh reservations only. Omitted means allow execution. */
+  /** Transactional authorisation on fresh reservations only, after parsing. Omitted means allow. */
   authorizeExecute?(
     context: OperationContext<Payload>,
     authorization: Authorization
   ): Promise<void> | void
-  /** Fresh operation work. Its JSON result is stored and replayed. */
+  /** The write, on fresh reservations only. Its JSON result is stored and replayed. */
   work(context: OperationContext<Payload>, authorization: Authorization): Promise<Result> | Result
 }
 
 /**
- * One deduplicated operation. Authorisation callbacks and `work` must be database-only and safe to rerun: a transaction
- * owner may roll back and call them again. A parser may be omitted when Authorization includes
- * undefined; otherwise it must supply the authorization promised to the callbacks.
+ * One deduplicated operation. The authorisation callbacks (`authorizeAccess`, `authorizeReplay`,
+ * `authorizeExecute`) and the write (`work`) run in the transaction; they must be database-only
+ * and safe to rerun: a transaction owner may roll back and call them again. `parseAuthorization`
+ * runs synchronously on fresh reservations only, gets no transaction, and turns the client's opaque
+ * authorisation into the value `authorizeExecute` and `work` receive. It may be omitted when
+ * Authorization includes undefined.
  */
 export type Operation<Payload, Authorization, Result> = OperationCallbacks<
   Payload,

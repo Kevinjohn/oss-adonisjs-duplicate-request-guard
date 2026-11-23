@@ -122,11 +122,16 @@ function releaseWriter(file: string, connection: LucidConnection) {
   if (writers.size === 0) writersByDatabasePath.delete(file)
 }
 
-/** The file's real path. A file not created yet resolves through its directory's real path. */
+/**
+ * The file's real path. Only a file not created yet resolves through its directory's real path;
+ * any other failure to inspect the path throws as it is, before the path is registered.
+ */
 function resolveDatabasePath(filename: string) {
   try {
     return realpathSync(filename)
-  } catch {
+  } catch (error) {
+    // Any failure but a missing file (a loop, a file used as a directory, a permission) surfaces.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     return join(realpathSync(dirname(resolve(filename))), basename(filename))
   }
 }
@@ -180,15 +185,20 @@ export function assertSupportedConnection(client: QueryClientContract | Transact
   writersByDatabasePath.set(file, writers)
 }
 
+/** The receipt to complete and the serialised result to store in it. */
+interface CompleteReceiptInput {
+  namespace: string
+  commandId: string
+  serialized: string
+}
+
 /**
  * Marks this namespace's pending receipt completed: exactly one pending row, or throw. Internal: not
  * re-exported from the package entry, and the exports map hides src/.
  */
 export async function completeReceipt(
   trx: TransactionClientContract,
-  namespace: string,
-  commandId: string,
-  serialized: string
+  { namespace, commandId, serialized }: CompleteReceiptInput
 ) {
   const updatedRowCount = Number(
     await trx
@@ -215,10 +225,12 @@ interface Frame {
   connection?: DriverConnection
   /** This operation's run, settled before its parent may roll back. */
   run?: Promise<unknown>
+  /** The promise a nested `executeIn` returned to its caller, observed once its parent reports it. */
+  returned?: Promise<unknown>
 }
 
 /** The current operation, carried through its authorisation callbacks and `work` by AsyncLocalStorage. */
-const commandFrame = new AsyncLocalStorage<Frame>()
+const operationFrame = new AsyncLocalStorage<Frame>()
 /** Open operations per transaction, outermost first. */
 const openFramesByTransaction = new WeakMap<TransactionClientContract, Frame[]>()
 
@@ -257,7 +269,7 @@ function requireKnexClient(client: QueryClientContract | TransactionClientContra
 }
 
 /**
- * Watches a connection from its first guarded use (or a host's `assertSupportedConnection` at boot).
+ * Watches a connection from its first deduplicated use (or a host's `assertSupportedConnection` at boot).
  * A statement inside a transaction that leaves the driver with no open transaction is the moment
  * the transaction ended, whoever issued it; without this, a child transaction opened next would
  * reopen a transaction that looks healthy. The pool handing the connection out again clears the mark.
@@ -324,9 +336,9 @@ export const internalHooks: { onClosing?: () => void; onUnwind?: () => void } = 
  * sibling, a call that lost its async context, a call from an operation that already returned) is
  * refused at once rather than queued, so it can neither corrupt the stack nor wait forever.
  */
-function claimCommandFrame(trx: TransactionClientContract): Frame {
+function claimOperationFrame(trx: TransactionClientContract): Frame {
   const stack = openFramesByTransaction.get(trx) ?? []
-  const caller = commandFrame.getStore()
+  const caller = operationFrame.getStore()
   const innermost = stack.at(-1)
   if (innermost !== (caller?.trx === trx ? caller : undefined)) {
     throw new ConcurrentCommandException()
@@ -348,7 +360,7 @@ function claimCommandFrame(trx: TransactionClientContract): Frame {
 }
 
 /** Takes the frame off the stack once its run has settled. */
-function releaseCommandFrame(frame: Frame) {
+function releaseOperationFrame(frame: Frame) {
   // claim() created the stack, and entries are never deleted.
   const stack = openFramesByTransaction.get(frame.trx) as Frame[]
   const index = stack.indexOf(frame)
@@ -365,6 +377,11 @@ function listOpenChildFrames(frame: Frame) {
 /** Marks the operation and every open operation nested under it aborted. */
 function markFrameAborted(frame: Frame) {
   frame.aborted = true
+  // The failure of the operation that aborts this one reports it, so a caller that dropped its
+  // promise does not also get an unhandled rejection. This holds at every depth: an aborted
+  // operation can settle before its own parent unwinds. An operation nothing aborts keeps its
+  // rejection unhandled.
+  void frame.returned?.catch(() => {})
   for (const child of listOpenChildFrames(frame)) markFrameAborted(child)
 }
 
@@ -377,7 +394,9 @@ function markFrameAborted(frame: Frame) {
  */
 async function abortChildren(frame: Frame) {
   const openChildFrames = listOpenChildFrames(frame)
-  for (const child of openChildFrames) markFrameAborted(child)
+  for (const child of openChildFrames) {
+    markFrameAborted(child)
+  }
   internalHooks.onUnwind?.()
   const childRunResults = await Promise.allSettled(openChildFrames.map((child) => child.run))
   return childRunResults.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []))
@@ -418,11 +437,18 @@ export function executeIn<Payload, Authorization, Result>(
   operation: Operation<Payload, Authorization, Result>,
   input: ExecuteInput<Payload>
 ): Promise<Outcome<Result>> {
-  const nested = commandFrame.getStore()?.trx === trx
-  const run = executeInTransaction(trx, operation, () => snapshotInput(input))
-  // A parent already waits for and reports failure of an outstanding nested operation.
-  // Observe the actual returned promise without changing the rejection callers await.
-  if (nested) void run.catch(() => {})
+  let claimed: Frame | undefined
+  const run = executeInTransaction({
+    trx,
+    operation,
+    admitInput: () => snapshotInput(input),
+    onClaimed: (frame) => {
+      claimed = frame
+    },
+  })
+  // The claim is synchronous. A nested operation's parent observes this promise only when it
+  // reports the operation as its own failure's cause; awaiting callers see the same rejection.
+  if (claimed?.parent) claimed.returned = run
   return run
 }
 
@@ -440,22 +466,33 @@ function snapshotInput<Payload>(input: ExecuteInput<Payload>): ExecuteInput<Payl
   }
 }
 
-async function executeInTransaction<Payload, Authorization, Result>(
-  trx: TransactionClientContract,
-  operation: Operation<Payload, Authorization, Result>,
+/** An operation to run on a transaction, with its input admitted once the transaction is claimed. */
+interface TransactionRunInput<Payload, Authorization, Result> {
+  trx: TransactionClientContract
+  operation: Operation<Payload, Authorization, Result>
   admitInput: () => ExecuteInput<Payload>
-): Promise<Outcome<Result>> {
+  /** Called with the operation's frame as soon as it is claimed, before any await. */
+  onClaimed?: (frame: Frame) => void
+}
+
+async function executeInTransaction<Payload, Authorization, Result>({
+  trx,
+  operation,
+  admitInput,
+  onClaimed,
+}: TransactionRunInput<Payload, Authorization, Result>): Promise<Outcome<Result>> {
   if (!trx.isTransaction) {
     throw new TransactionOwnerException('executeIn requires a transaction client')
   }
   assertSupportedConnection(trx)
-  const frame = claimCommandFrame(trx)
+  const frame = claimOperationFrame(trx)
+  onClaimed?.(frame)
   try {
     const admitted = admitInput()
     // The one outcome both observers see: this call's caller and an unwinding parent, which attaches
     // it as its error's cause.
-    frame.run = commandFrame
-      .run(frame, () => runClaimed(trx, frame, operation, admitted))
+    frame.run = operationFrame
+      .run(frame, () => runClaimed({ trx, frame, operation, input: admitted }))
       .catch((error: unknown) => {
         // An enclosing operation rolled back over this one: report that, not the knock-on failure.
         if (frame.aborted && !(error instanceof UnawaitedNestedCommandException)) {
@@ -465,16 +502,24 @@ async function executeInTransaction<Payload, Authorization, Result>(
       })
     return (await frame.run) as Outcome<Result>
   } finally {
-    releaseCommandFrame(frame)
+    releaseOperationFrame(frame)
   }
 }
 
-async function runClaimed<Payload, Authorization, Result>(
-  trx: TransactionClientContract,
-  frame: Frame,
-  operation: Operation<Payload, Authorization, Result>,
+/** A claimed operation: its transaction, its frame and its admitted input. */
+interface ClaimedRunInput<Payload, Authorization, Result> {
+  trx: TransactionClientContract
+  frame: Frame
+  operation: Operation<Payload, Authorization, Result>
   input: ExecuteInput<Payload>
-): Promise<Outcome<Result>> {
+}
+
+async function runClaimed<Payload, Authorization, Result>({
+  trx,
+  frame,
+  operation,
+  input,
+}: ClaimedRunInput<Payload, Authorization, Result>): Promise<Outcome<Result>> {
   // Take SQLite's writer lock before the first read. A deferred transaction that reads and then
   // writes fails with SQLITE_BUSY_SNAPSHOT when another process committed in between.
   assertLive(frame)
@@ -503,7 +548,7 @@ async function runClaimed<Payload, Authorization, Result>(
       payload: input.payload,
       trx,
     })
-    const outcome = await reserveAndRun(trx, frame, operation, input, namespace, payloadHash)
+    const outcome = await reserveAndRun({ trx, frame, operation, input, namespace, payloadHash })
     assertSettled(frame)
     await trx.rawQuery(`RELEASE SAVEPOINT ${savepoint}`)
     return outcome
@@ -547,14 +592,24 @@ function attachCause(error: unknown, cause: unknown) {
   }
 }
 
-async function reserveAndRun<Payload, Authorization, Result>(
-  trx: TransactionClientContract,
-  frame: Frame,
-  operation: Operation<Payload, Authorization, Result>,
-  input: ExecuteInput<Payload>,
-  namespace: string,
+/** A claimed operation inside its savepoint, with the receipt identity it reserves. */
+interface ReservationInput<Payload, Authorization, Result> extends ClaimedRunInput<
+  Payload,
+  Authorization,
+  Result
+> {
+  namespace: string
   payloadHash: string
-): Promise<Outcome<Result>> {
+}
+
+async function reserveAndRun<Payload, Authorization, Result>({
+  trx,
+  frame,
+  operation,
+  input,
+  namespace,
+  payloadHash,
+}: ReservationInput<Payload, Authorization, Result>): Promise<Outcome<Result>> {
   const context: OperationContext<Payload> = {
     actorId: input.actorId,
     scopeId: input.scopeId,
@@ -613,6 +668,8 @@ async function reserveAndRun<Payload, Authorization, Result>(
     return { replayed: true, result: JSON.parse(row.result) as Result }
   }
 
+  // Fresh only, in role order: parsing of the client's opaque authorisation, the transactional
+  // authorisation callback, then the write.
   assertLive(frame)
   // Operation permits parser omission only when Authorization includes undefined.
   const authorization = operation.parseAuthorization?.(input.authorization) as Authorization
@@ -623,12 +680,11 @@ async function reserveAndRun<Payload, Authorization, Result>(
   assertLive(frame)
   frame.closing = true
   internalHooks.onClosing?.()
-  await completeReceipt(
-    trx,
+  await completeReceipt(trx, {
     namespace,
-    input.command.commandId,
-    serializeCanonicalJson(result, refuseResult)
-  )
+    commandId: input.command.commandId,
+    serialized: serializeCanonicalJson(result, refuseResult),
+  })
   return { replayed: false, result }
 }
 
@@ -648,7 +704,9 @@ export async function execute<Payload, Authorization, Result>(
   }
   assertSupportedConnection(client)
   const admitted = snapshotInput(input)
-  return client.transaction((trx) => executeInTransaction(trx, operation, () => admitted))
+  return client.transaction((trx) =>
+    executeInTransaction({ trx, operation, admitInput: () => admitted })
+  )
 }
 
 /**

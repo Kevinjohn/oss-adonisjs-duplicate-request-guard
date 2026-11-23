@@ -39,7 +39,9 @@ test.group('SQLite pool rule', () => {
     })
   }
 
-  test('refused: pool max 2, on both owners, before any policy runs', async ({ assert }) => {
+  test('refused: pool max 2, on both owners, before any authorisation callback runs', async ({
+    assert,
+  }) => {
     const { client } = await createDatabase({ max: 2 })
     const { operation, calls } = makeNoteOperation()
     assert.equal(readMaximumPoolConnectionCount(client), 2)
