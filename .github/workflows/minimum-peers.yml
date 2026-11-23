@@ -43,3 +43,23 @@ jobs:
           }
           JS
       - run: pnpm quick:test --files tests/lost_transaction.spec.ts
+
+  packed-consumer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with: { node-version: 24, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Test packed candidate in a clean SQLite host at the peer floor
+        env:
+          CORE_VERSION: '7.0.0'
+          LUCID_VERSION: '22.0.0'
+        run: |
+          mkdir -p tmp/consumer-package
+          pnpm pack --pack-destination tmp/consumer-package
+          bash bin/release_consumer_smoke.sh tmp/consumer-package/*.tgz

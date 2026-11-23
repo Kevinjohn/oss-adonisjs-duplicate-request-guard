@@ -33,9 +33,10 @@ Peers: `@adonisjs/core` ^7.0.0, `@adonisjs/lucid` ^22.0.0. Node >= 24. Each rele
 archive's SHA-256.
 
 The configure hook uses Core's `makeUsingStub`, not an Assembler code transformer, so this package
-does not declare an Assembler peer. Clean packed-candidate consumers have configured twice,
-run the migration and replayed a v0.1.3 receipt without Assembler on Core 7.0.0/Lucid 22.0.0
-and Core 7.6.0/Lucid 22.4.2.
+does not declare an Assembler peer. On every pull request a clean packed-candidate consumer
+configures twice, runs the migration and replays a v0.1.3 receipt without Assembler: the `checks`
+workflow runs it on Core 7.6.0/Lucid 22.4.2 and the `minimum peers` workflow on Core 7.0.0/Lucid
+22.0.0.
 
 ## User stories
 
