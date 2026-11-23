@@ -2,7 +2,7 @@ import { test } from '@japa/runner'
 import { execute, type Operation } from '../index.js'
 import { countRows, createDatabase, makeOperationInput, listReceipts } from './helpers.js'
 
-test.group('execute: optional policies', () => {
+test.group('execute: optional authorisation callbacks', () => {
   for (const replay of [false, true]) {
     for (const parse of [false, true]) {
       for (const authorize of [false, true]) {
@@ -75,7 +75,9 @@ test.group('execute: optional policies', () => {
     }
   }
 
-  test('required access still refuses commands without optional policies', async ({ assert }) => {
+  test('required access still refuses operations without optional authorisation callbacks', async ({
+    assert,
+  }) => {
     const { client } = await createDatabase()
     const denied = new Error('Access denied')
     let workRuns = 0

@@ -65,7 +65,7 @@ test.group('transaction owners', () => {
     assert.equal(rows[0].state, 'completed')
   })
 
-  test('re-entering a command from its own work (context.trx) is in progress', async ({
+  test('re-entering an operation from its own work (context.trx) is in progress', async ({
     assert,
   }) => {
     const { client } = await createDatabase()

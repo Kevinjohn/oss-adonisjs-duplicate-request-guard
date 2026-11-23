@@ -7,7 +7,7 @@ As an operation caller, I want request deduplication to check current access bef
 **Entry:** Call `execute` or `executeIn` using the original operation namespace and identity.
 **Documentation:** [README operation authorisation callback order](../README.md#use)
 **Source:** [`reserveAndRun`](../src/receipts.ts)
-**Coverage:** [`tests/optional_policies.spec.ts`](../tests/optional_policies.spec.ts), [`tests/identity.spec.ts`](../tests/identity.spec.ts)
+**Coverage:** [`tests/optional_authorization_callbacks.spec.ts`](../tests/optional_authorization_callbacks.spec.ts), [`tests/identity.spec.ts`](../tests/identity.spec.ts)
 
 ## Acceptance criteria
 
@@ -16,7 +16,7 @@ As an operation caller, I want request deduplication to check current access bef
 - `parseAuthorization` and `authorizeExecute` apply only to a fresh reservation; they are not rerun during replay.
 - Another actor using the same client IDs is in a separate namespace and learns nothing about the first actor’s result.
 
-- The optional replay callback receives the current operation context and a separate parsed copy of the stored result. Mutating that copy does not change the result returned to the caller. When the callback is omitted, successful current access suffices. The opaque fresh authorisation is never read on the replay branch. See [optional authorisation callback combinations](../tests/optional_policies.spec.ts) and the [replay branch](../src/receipts.ts#L638).
+- The optional replay callback receives the current operation context and a separate parsed copy of the stored result. Mutating that copy does not change the result returned to the caller. When the callback is omitted, successful current access suffices. The opaque fresh authorisation is never read on the replay branch. See [optional authorisation callback combinations](../tests/optional_authorization_callbacks.spec.ts) and the [replay branch](../src/receipts.ts#L638).
 
 ## User flow
 
@@ -42,7 +42,7 @@ Scope: package operation path; caller authentication, HTTP response shaping, and
 
 ```mermaid
 flowchart TD
-    A["executeIn delegates to runClaimed"] --> V["Bind live driver and take writer lock; validate identity and hash scope/payload"]
+    A["execute or executeIn reaches runClaimed through executeInTransaction"] --> V["Bind live driver and take writer lock; validate identity and hash scope/payload"]
     V -->|Error| X["Reject before callback"]
     V --> A2["Open SAVEPOINT; call authorizeAccess"]
     A2 -->|Denied| Z["rollback savepoint; rethrow; no receipt change"]

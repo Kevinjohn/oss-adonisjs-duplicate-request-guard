@@ -20,8 +20,10 @@ import {
   awaitWithDeadline,
 } from './helpers.js'
 
-test.group('commands compose on the outer transaction', () => {
-  test('executeIn on the outer trx from inside work runs a nested command', async ({ assert }) => {
+test.group('operations compose on the outer transaction', () => {
+  test('executeIn on the outer trx from inside work runs a nested operation', async ({
+    assert,
+  }) => {
     const { client } = await createDatabase()
     const outerOp = makeNoteOperation()
     const innerOp = makeNoteOperation()
@@ -49,7 +51,9 @@ test.group('commands compose on the outer transaction', () => {
     assert.equal(await countRows(client, 'notes'), 2)
   })
 
-  test('a nested failure caught by work rolls back only the nested command', async ({ assert }) => {
+  test('a nested failure caught by work rolls back only the nested operation', async ({
+    assert,
+  }) => {
     const { client } = await createDatabase()
     const outerOp = makeNoteOperation()
     const innerOp = makeNoteOperation()
@@ -83,7 +87,7 @@ test.group('commands compose on the outer transaction', () => {
     assert.equal(proof.used, 0)
   })
 
-  test('an outer failure rolls back the nested command too', async ({ assert }) => {
+  test('an outer failure rolls back the nested operation too', async ({ assert }) => {
     const { client } = await createDatabase()
     const outerOp = makeNoteOperation()
     const innerOp = makeNoteOperation()
@@ -97,7 +101,7 @@ test.group('commands compose on the outer transaction', () => {
             ...makeOperationInput(2),
             authorization: { proofToken: 'p2' },
           })
-          throw new Error('outer failed after the nested command')
+          throw new Error('outer failed after the nested operation')
         }
         await executeIn(trx, outerOp.operation, {
           ...makeOperationInput(1),
@@ -149,7 +153,9 @@ test.group('commands compose on the outer transaction', () => {
 })
 
 test.group('siblings on one transaction are refused, never queued', () => {
-  test('(a) a sibling started while a command is open is refused at once', async ({ assert }) => {
+  test('(a) a sibling started while an operation is open is refused at once', async ({
+    assert,
+  }) => {
     const { client } = await createDatabase()
     for (const sequenceNumber of [1, 2]) await addProof(client, `p${sequenceNumber}`)
     const a = makeNamedOperation('notes.a')
@@ -173,7 +179,7 @@ test.group('siblings on one transaction are refused, never queued', () => {
     assert.deepEqual(await listReceiptStates(client), [])
   })
 
-  test('(b) a sibling cannot release or mask a failing command', async ({ assert }) => {
+  test('(b) a sibling cannot release or mask a failing operation', async ({ assert }) => {
     const { client } = await createDatabase()
     for (const sequenceNumber of [1, 2]) await addProof(client, `p${sequenceNumber}`)
     const a = makeNamedOperation('notes.a')
@@ -191,7 +197,7 @@ test.group('siblings on one transaction are refused, never queued', () => {
     assert.deepEqual(await listReceiptStates(client), [['c1', 'completed']])
   })
 
-  test("a sibling never authorizes against another command's uncommitted write", async ({
+  test("a sibling never authorizes against another operation's uncommitted write", async ({
     assert,
   }) => {
     const { client } = await createDatabase()
@@ -224,7 +230,9 @@ test.group('siblings on one transaction are refused, never queued', () => {
     assert.lengthOf(await client.from('memberships').where('user_id', 'carol'), 0)
   })
 
-  test("a call that lost the command's async context is refused, not hung", async ({ assert }) => {
+  test("a call that lost the operation's async context is refused, not hung", async ({
+    assert,
+  }) => {
     const { client } = await createDatabase()
     for (const sequenceNumber of [1, 2]) await addProof(client, `p${sequenceNumber}`)
     const parent = makeNamedOperation('notes.parent')
@@ -274,7 +282,7 @@ test.group('siblings on one transaction are refused, never queued', () => {
   })
 })
 
-test.group('nested commands must be awaited', () => {
+test.group('nested operations must be awaited', () => {
   test('dropping a nested promise fails the parent without an unhandled rejection', ({
     assert,
   }) => {
@@ -302,7 +310,7 @@ test.group('nested commands must be awaited', () => {
     assert.include(result.stderr, 'dropped child failed')
     assert.notInclude(result.stdout, 'reached nobody')
   })
-  test('nested commands awaited one after another inside work compose', async ({ assert }) => {
+  test('nested operations awaited one after another inside work compose', async ({ assert }) => {
     const { client } = await createDatabase()
     for (const sequenceNumber of [1, 2, 3]) await addProof(client, `p${sequenceNumber}`)
     const outer = makeNamedOperation('notes.outer')
@@ -369,7 +377,7 @@ test.group('nested commands must be awaited', () => {
     }
   })
 
-  test('parallel nested commands inside work: the second is refused', async ({ assert }) => {
+  test('parallel nested operations inside work: the second is refused', async ({ assert }) => {
     const { client } = await createDatabase()
     for (const sequenceNumber of [1, 2, 3]) await addProof(client, `p${sequenceNumber}`)
     const outer = makeNamedOperation('notes.outer')
@@ -484,7 +492,7 @@ test.group('nested commands must be awaited', () => {
     assert.equal(await countRows(client, 'notes'), 0)
   })
 
-  test('a nested command from authorizeAccess is rolled back with its parent', async ({
+  test('a nested operation from authorizeAccess is rolled back with its parent', async ({
     assert,
   }) => {
     const { client } = await createDatabase()
@@ -506,7 +514,9 @@ test.group('nested commands must be awaited', () => {
     assert.equal(await countRows(client, 'notes'), 0)
   })
 
-  test('a replay whose policy left a child open fails loudly', async ({ assert }) => {
+  test('a replay whose authorisation callback left a child open fails loudly', async ({
+    assert,
+  }) => {
     const { client } = await createDatabase()
     for (const sequenceNumber of [1, 2]) await addProof(client, `p${sequenceNumber}`)
     const parent = makeNamedOperation('notes.parent')
@@ -558,8 +568,8 @@ test.group('nested commands must be awaited', () => {
   })
 })
 
-test.group('host queries while a command is open (documented rule)', () => {
-  test('a host write issued while an unawaited command is open is lost when it fails', async ({
+test.group('host queries while an operation is open (documented rule)', () => {
+  test('a host write issued while an unawaited operation is open is lost when it fails', async ({
     assert,
   }) => {
     const { client } = await createDatabase()
@@ -609,7 +619,7 @@ test.group('savepoint names', () => {
   })
 })
 
-test.group('no new children once a command is closing', (group) => {
+test.group('no new children once an operation is closing', (group) => {
   group.each.teardown(() => {
     internalHooks.onUnwind = undefined
     internalHooks.onClosing = undefined
@@ -717,7 +727,9 @@ test.group('an aborted branch admits and continues nothing', (group) => {
     return { child, grandchild, ready, release, run }
   }
 
-  test('a grandchild started after the unwind is refused before any policy', async ({ assert }) => {
+  test('a grandchild started after the unwind is refused before any authorisation callback', async ({
+    assert,
+  }) => {
     const { client } = await createDatabase()
     const { child, grandchild, ready, release, run } = branch()
     let grandCode = ''

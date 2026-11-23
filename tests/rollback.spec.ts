@@ -46,7 +46,7 @@ test.group('a failed execute never leaves a pending row', () => {
     assert.isFalse(retry.replayed)
   })
 
-  test('a frozen error from work with an open child still rolls the command back', async ({
+  test('a frozen error from work with an open child still rolls the operation back', async ({
     assert,
   }) => {
     const { client } = await createDatabase()
@@ -120,7 +120,7 @@ test.group('an aborted child never commits without its receipt', (group) => {
   }
 
   /**
-   * Parent work: Promise.all of a child command held in its `work` and a validation that rejects
+   * Parent work: Promise.all of a child operation held in its `work` and a validation that rejects
    * once the child is there. The child resumes, and writes, only after the parent has aborted it.
    */
   function probe() {
@@ -156,7 +156,7 @@ test.group('an aborted child never commits without its receipt', (group) => {
   }
 
   for (const waits of [true, false]) {
-    test(`the host ${waits ? 'waits for the child, then runs' : 'immediately runs'} its next command`, async ({
+    test(`the host ${waits ? 'waits for the child, then runs' : 'immediately runs'} its next operation`, async ({
       assert,
     }) => {
       const { client } = await createDatabase()
@@ -183,10 +183,10 @@ test.group('an aborted child never commits without its receipt', (group) => {
       )
       assert.equal(parentError, 'validation failed')
       assert.equal((parentCause as { code?: string }).code, 'E_UNAWAITED_NESTED_COMMAND')
-      // The parent waited for the child: it had settled before the next command ran.
+      // The parent waited for the child: it had settled before the next operation ran.
       assert.isTrue(state.childSettledWhenNextRan)
       assert.equal(child.calls.work, 1)
-      // Only the next command's note and receipt committed: no orphan note from the child.
+      // Only the next operation's note and receipt committed: no orphan note from the child.
       assert.deepEqual(await listReceiptStates(client), [['c3', 'completed']])
       assert.equal(await countRows(client, 'notes'), 1)
       const retry = await client.transaction((trx) =>
@@ -198,7 +198,9 @@ test.group('an aborted child never commits without its receipt', (group) => {
     })
   }
 
-  test('an aborted child stops before its next policy or work', async ({ assert }) => {
+  test('an aborted child stops before its next authorisation callback or work', async ({
+    assert,
+  }) => {
     const { client } = await createDatabase()
     for (const sequenceNumber of [1, 2]) await addProof(client, `p${sequenceNumber}`)
     const parent = makeNamedOperation('notes.parent')

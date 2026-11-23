@@ -18,7 +18,7 @@ test.group('executeIn inside Account Kit 0.5.1 authentication.withCurrent', (gro
     return () => fixture.close()
   })
 
-  async function prepareGuardedNotes() {
+  async function prepareDeduplicatedNotes() {
     const sequenceNumber = ++users
     const credential = await fixture.signIn(`user-${sequenceNumber}@x.test`)
     const token = `p${sequenceNumber}`
@@ -43,7 +43,7 @@ test.group('executeIn inside Account Kit 0.5.1 authentication.withCurrent', (gro
   }
 
   test('(a) withCurrent has committed when it returns', async ({ assert }) => {
-    const { credential, operation, command } = await prepareGuardedNotes()
+    const { credential, operation, command } = await prepareDeduplicatedNotes()
     const outcome = await fixture.kit.authentication.withCurrent(credential, ({ trx }) =>
       executeIn(trx, operation, command)
     )
@@ -71,7 +71,7 @@ test.group('executeIn inside Account Kit 0.5.1 authentication.withCurrent', (gro
   test('(b) a rerun after a busy error mid-work leaves one receipt and one side effect', async ({
     assert,
   }) => {
-    const { credential, operation, calls, hooks, command, state } = await prepareGuardedNotes()
+    const { credential, operation, calls, hooks, command, state } = await prepareDeduplicatedNotes()
     let runs = 0
     hooks.beforeWork = () => {
       if (calls.work === 1) throw makeBusyError()
@@ -94,7 +94,7 @@ test.group('executeIn inside Account Kit 0.5.1 authentication.withCurrent', (gro
   test('(b) a rerun after completion but before commit runs fresh, not as a replay', async ({
     assert,
   }) => {
-    const { credential, operation, calls, command, state } = await prepareGuardedNotes()
+    const { credential, operation, calls, command, state } = await prepareDeduplicatedNotes()
     let runs = 0
     const outcome = await fixture.kit.authentication.withCurrent(credential, async ({ trx }) => {
       const result = await executeIn(trx, operation, command)
@@ -113,7 +113,7 @@ test.group('executeIn inside Account Kit 0.5.1 authentication.withCurrent', (gro
   test('(b) real lock contention from another connection is waited out by the Kit', async ({
     assert,
   }) => {
-    const { credential, operation, calls, command, state } = await prepareGuardedNotes()
+    const { credential, operation, calls, command, state } = await prepareDeduplicatedNotes()
     const other = new BetterSqlite3(fixture.file)
     const ownerClient = fixture.db.connection().getWriteClient()
     let runs = 0
@@ -169,7 +169,7 @@ test.group('executeIn inside Account Kit 0.5.1 authentication.withCurrent', (gro
   test('(b) the Kit gives up after about 5 seconds of contention and leaves nothing', async ({
     assert,
   }) => {
-    const { credential, operation, calls, command, state } = await prepareGuardedNotes()
+    const { credential, operation, calls, command, state } = await prepareDeduplicatedNotes()
     const other = new BetterSqlite3(fixture.file)
     other.exec('BEGIN IMMEDIATE')
     const started = performance.now()
@@ -192,7 +192,7 @@ test.group('executeIn inside Account Kit 0.5.1 authentication.withCurrent', (gro
   test('a host rollback leaves nothing, then a retry commits once and replay writes nothing', async ({
     assert,
   }) => {
-    const { credential, operation, calls, command, state } = await prepareGuardedNotes()
+    const { credential, operation, calls, command, state } = await prepareDeduplicatedNotes()
     await assert.rejects(
       () =>
         fixture.kit.authentication.withCurrent(credential, async ({ trx }) => {
@@ -225,7 +225,7 @@ test.group('executeIn inside Account Kit 0.5.1 authentication.withCurrent', (gro
   })
 
   test('execute (managed) refuses the Kit transaction', async ({ assert }) => {
-    const { credential, operation, command } = await prepareGuardedNotes()
+    const { credential, operation, command } = await prepareDeduplicatedNotes()
     await assert.rejects(
       () =>
         fixture.kit.authentication.withCurrent(credential, ({ trx }) =>

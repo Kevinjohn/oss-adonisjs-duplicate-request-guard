@@ -111,7 +111,7 @@ test.group('pruneReceipts', () => {
     const { operation, hooks } = makeNoteOperation()
     await seed(client)
     const stop = new Int32Array(new SharedArrayBuffer(4))
-    // [work started, work finished]: lets the worker see guarded work in flight.
+    // [work started, work finished]: lets the worker see deduplicated work in flight.
     const flight = new Int32Array(new SharedArrayBuffer(8))
     hooks.beforeWork = () => void Atomics.add(flight, 0, 1)
     hooks.afterWork = () => void Atomics.add(flight, 1, 1)
@@ -142,7 +142,7 @@ test.group('pruneReceipts', () => {
       await worker.terminate()
     }
     const { runs, deleted, overlapped } = result
-    // The worker kept pruning for the whole run, and a prune overlapped guarded work in flight.
+    // The worker kept pruning for the whole run, and a prune overlapped deduplicated work in flight.
     assert.isAbove(runs, 1)
     assert.isAbove(overlapped, 0)
     assert.isTrue(outcomes.every((outcome) => !outcome.replayed))

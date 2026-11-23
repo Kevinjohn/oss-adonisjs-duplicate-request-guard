@@ -11,7 +11,7 @@ As an application operator, I want to configure the receipt table and a supporte
 
 ## Acceptance criteria
 
-- Configure publishes the receipts migration once. It looks in the migrations directory and every subdirectory below it. An existing regular file ending `_create_request_receipts_table.ts`, found through Lucid's recursive migration inventory, counts as installed and is left unchanged.
+- Configure publishes the receipts migration once. It looks in the migrations directory and every subdirectory below it. An existing regular script file that Lucid's recursive migration inventory lists (`.ts` other than `.d.ts`, `.js`, `.mjs` or `.cjs`) and whose name without its extension ends `_create_request_receipts_table` counts as installed and is left unchanged, whatever its extension.
 - Any entry ending `_create_request_receipts_table.ts` that is not a regular file stops configure with an error naming it, before anything is published: a directory, a broken link, and also a symbolic link that resolves to a regular migration file, which Lucid's inventory does not list. Replace it with a regular migration file or remove it, then rerun.
 - An installed file does not prove storage exists: Lucid must still apply the migration; its down migration drops the receipts table and its replay history.
 - A missing migrations directory counts as no existing migration and the migration is published. Any other read failure of the migrations directory (for example permissions, or a file in its place) stops configure with that error before anything is published; fix the directory and rerun.

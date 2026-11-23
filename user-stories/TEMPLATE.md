@@ -4,7 +4,7 @@ A story records one meaningful user or operator action and its purpose. Replace 
 
 ## Story example
 
-The catalogue's [guarded-command story](US-GUARD-01-execute-command.md) is the repository-specific example. Copy its structure, then adapt the action and both diagrams to the new outcome.
+The catalogue's [deduplicated-operation story](US-GUARD-01-execute-command.md) is the repository-specific example. Copy its structure, then adapt the action and both diagrams to the new outcome.
 
 ````markdown
 # US-AREA-NN — Action title

@@ -269,7 +269,7 @@ function requireKnexClient(client: QueryClientContract | TransactionClientContra
 }
 
 /**
- * Watches a connection from its first guarded use (or a host's `assertSupportedConnection` at boot).
+ * Watches a connection from its first deduplicated use (or a host's `assertSupportedConnection` at boot).
  * A statement inside a transaction that leaves the driver with no open transaction is the moment
  * the transaction ended, whoever issued it; without this, a child transaction opened next would
  * reopen a transaction that looks healthy. The pool handing the connection out again clears the mark.

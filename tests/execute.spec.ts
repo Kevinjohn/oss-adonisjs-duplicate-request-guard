@@ -12,7 +12,7 @@ import {
 } from './helpers.js'
 
 test.group('execute: reserve, complete, replay', () => {
-  test('a fresh command runs once and stores a completed receipt', async ({ assert }) => {
+  test('a fresh operation runs once and stores a completed receipt', async ({ assert }) => {
     const { db, client } = await createDatabase()
     const { operation, calls } = makeNoteOperation()
     await addProof(client, 'p1')
@@ -190,7 +190,7 @@ test.group('execute: failures roll back the reservation', () => {
   })
 })
 
-test.group('what a callback mutates does not change the command', () => {
+test.group('what a callback mutates does not change the operation', () => {
   test('work that rewrites the input identity still completes the reserved receipt', async ({
     assert,
   }) => {
@@ -215,7 +215,7 @@ test.group('what a callback mutates does not change the command', () => {
     assert.deepEqual(retry, { replayed: true, result: fresh.result })
   })
 
-  test('a replay policy that rewrites its result does not change what the caller gets', async ({
+  test('a replay authorisation callback that rewrites its result does not change what the caller gets', async ({
     assert,
   }) => {
     const { client } = await createDatabase()

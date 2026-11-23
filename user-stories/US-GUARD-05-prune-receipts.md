@@ -24,7 +24,7 @@ flowchart TD
     B --> C{"Deletion succeeds?"}
     C -->|No| D["Observe failure and correct before retry"]
     C -->|Yes| E["Receive removed-row count"]
-    E --> F["Deleted command identities may execute fresh later"]
+    E --> F["Deleted receipt identities may execute fresh later"]
 ```
 
 ## Code flow
