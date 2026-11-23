@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Changed: correction to 0.2.0, whose entry omitted two behaviour changes. Configure takes an
+  exclusive publication claim, a temporary `.request-receipts-configure.lock` directory in the
+  migrations directory, so a simultaneous configure fails and must be rerun. A nested `executeIn`
+  promise was observed by the package so that dropping it raised no unhandled rejection.
+- Fixed: a dropped nested `executeIn` that failed and settled before its parent finished was
+  swallowed since 0.2.0, and the parent could commit. Its rejection is unhandled again, as in
+  0.1.3; a nested operation the parent reports as its failure's `cause` still raises none.
+- Changed: the "already claimed" configure error names the absolute lock directory path.
+- Changed: a SQLite database path that cannot be inspected for any reason other than a file not
+  created yet (for example a link loop, or a file used as a directory) now fails the connection
+  check with that filesystem error instead of being registered under its directory's real path.
+
 ## 0.2.1 - 2026-11-22
 
 - Test against Account Kit 0.5.1.
