@@ -59,7 +59,7 @@ flowchart TD
     K --> L["Acquire exclusive publication claim"]
     R -->|Other error| X["Rethrow before createCodemods"]
     R -->|No| L
-    L -->|Held by another run| Z["Throw publication claim error with rerun guidance"]
+    L -->|Claim path already exists| Z["Throw publication claim error with rerun guidance"]
     L -->|Other claim error| X
     L -->|Acquired| N{"Recursive readdir: an entry ending _create_request_receipts_table.ts that is not a regular file?"}
     N -->|Yes, including a symlink| Y["Throw naming the entry before createCodemods; finally removes claim"]
