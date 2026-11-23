@@ -77,11 +77,13 @@ flowchart TD
     G -->|Mismatch or pending| X["conflict or in-progress error"]
     G -->|Completed and matching| L["authorizeReplay if provided; build replayed=true outcome"]
     F -->|Yes| H["parseAuthorization (fresh-only parsing); authorizeExecute (transactional authorisation callback); work (the write)"]
-    H --> I["completeReceipt requires one pending row"]
+    H --> I["Validate and serialise work result; completeReceipt requires one pending row"]
     I --> J["Build replayed=false outcome"]
     L --> K["assertSettled; release savepoint"]
     J --> K
-    K --> M["Lucid commits managed transaction"]
+    K --> M["Release frame; Lucid commits managed transaction"]
+    M -->|Commit fails| X2
+    M -->|Commit succeeds| O["Return outcome"]
     K -->|Release or settlement error| Y
     D2 -->|Error| Y["Abort and await nested children; attempt savepoint rollback; rethrow"]
     X --> Y
@@ -91,4 +93,4 @@ flowchart TD
     Y --> T
 ```
 
-**Code references:** [API](../index.ts), [execute](../src/receipts.ts#L693), [Operation](../src/types.ts#L41)
+**Code references:** [API](../index.ts), [execute](../src/receipts.ts#L695), [Operation](../src/types.ts#L41)

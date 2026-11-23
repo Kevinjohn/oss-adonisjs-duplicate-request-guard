@@ -1,6 +1,6 @@
 # User story catalogue
 
-Scope: the current public exports and operation contract, fresh execution and replay, transaction composition, concurrency/nesting failure behaviour, SQLite connection constraints, and pruning. Story status describes availability, not a test result. The linked focused tests and packed consumer cover these contracts.
+Reviewed against `74251ff6582c3dac4c50d2d0f6a7d060055f5f0a` (0.2.2). Scope: the current public exports and operation contract, fresh execution and replay, transaction composition, concurrency/nesting failure behaviour, SQLite connection constraints, and pruning. Story status describes availability, not a test result. The linked focused tests and packed consumer cover these contracts.
 
 ## Index
 
