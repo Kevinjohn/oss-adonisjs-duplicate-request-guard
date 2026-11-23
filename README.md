@@ -20,7 +20,7 @@ node ace migration:run
 `configure` writes the migration to the app's migrations directory (`app.migrationsPath()`,
 `database/migrations` by default). If a connection sets its own `migrations.paths` without that
 directory, move the file into one of those paths, or add the directory to them, before
-`migration:run`. Configure recognizes regular receipts migrations in this directory and its subdirectories. If configure reports a matching symlink or other non-file entry, replace it with a regular migration file or remove it before rerunning.
+`migration:run`. Configure recognises regular receipts migrations in this directory and its subdirectories. If configure reports a matching symlink or other non-file entry, replace it with a regular migration file or remove it before rerunning.
 
 Since v0.2.0, concurrent configure publication is exclusive. If a simultaneous
 configure fails because another process owns publication, let the first finish then rerun.
@@ -89,7 +89,7 @@ role against the stored result before returning it.
 For a protected operation, pass the client's authorisation through untouched. Put single-use
 proof parsing in `parseAuthorization` and proof consumption in `authorizeExecute`, before the
 write and inside the same transaction. Neither runs on replay. If `parseAuthorization` is
-omitted, its authorization type must admit `undefined`; the authorization input is then ignored.
+omitted, its `Authorization` type must admit `undefined`; the `authorization` input is then ignored.
 Both `authorizeReplay` and `authorizeExecute` are optional and throw to refuse their path.
 
 The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh: `parseAuthorization`
