@@ -295,6 +295,23 @@ test.group('nested operations must be awaited', () => {
     assert.equal(result.status, 0, result.stderr)
     assert.include(result.stdout, 'parent failed, no unhandled child rejection or committed writes')
   })
+  test('an aborted grandchild that settles before its parent unwinds raises no unhandled rejection', ({
+    assert,
+  }) => {
+    const fixture = fileURLToPath(
+      new URL('./fixtures/nested_grandchild_process.ts', import.meta.url)
+    )
+    const result = spawnSync(
+      process.execPath,
+      ['--unhandled-rejections=strict', '--import=@poppinss/ts-exec', fixture],
+      { encoding: 'utf8', timeout: 10_000 }
+    )
+    assert.equal(result.status, 0, result.stderr)
+    assert.include(
+      result.stdout,
+      'parent failed, no unhandled nested rejection or committed writes'
+    )
+  })
   test('a dropped nested failure that no parent reports stays an unhandled rejection', ({
     assert,
   }) => {

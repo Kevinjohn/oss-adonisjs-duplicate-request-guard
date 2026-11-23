@@ -377,6 +377,11 @@ function listOpenChildFrames(frame: Frame) {
 /** Marks the operation and every open operation nested under it aborted. */
 function markFrameAborted(frame: Frame) {
   frame.aborted = true
+  // The failure of the operation that aborts this one reports it, so a caller that dropped its
+  // promise does not also get an unhandled rejection. This holds at every depth: an aborted
+  // operation can settle before its own parent unwinds. An operation nothing aborts keeps its
+  // rejection unhandled.
+  void frame.returned?.catch(() => {})
   for (const child of listOpenChildFrames(frame)) markFrameAborted(child)
 }
 
@@ -391,9 +396,6 @@ async function abortChildren(frame: Frame) {
   const openChildFrames = listOpenChildFrames(frame)
   for (const child of openChildFrames) {
     markFrameAborted(child)
-    // This operation's failure reports the child, so a caller that dropped its promise does not
-    // also get an unhandled rejection. A child no parent reports keeps its rejection unhandled.
-    void child.returned?.catch(() => {})
   }
   internalHooks.onUnwind?.()
   const childRunResults = await Promise.allSettled(openChildFrames.map((child) => child.run))
