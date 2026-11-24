@@ -66,4 +66,4 @@ flowchart TD
     T -->|Success on executeIn| P["Return provisional outcome to host transaction owner"]
 ```
 
-**Code references:** [authorisation callback order](../README.md#use), [replay branch](../src/receipts.ts#L662), [namespace construction](../src/receipts.ts#L557), [refusal rollback](../src/receipts.ts#L582)
+**Code references:** [fresh operation flow](US-GUARD-01-execute-command.md#code-flow), [authorisation callback order](../README.md#use), [replay branch](../src/receipts.ts#L662), [namespace construction](../src/receipts.ts#L557), [refusal rollback](../src/receipts.ts#L582)
