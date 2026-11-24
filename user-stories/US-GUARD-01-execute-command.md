@@ -22,7 +22,7 @@ As an operation caller, I want to reuse the same operation identity on retries s
 - `Operation` requires `name`, `authorizeAccess`, and `work`; omitted execute/replay authorisation callbacks allow their respective path. Use only the provided `trx` for database changes.
 - A fresh reservation parses optional opaque authorisation, runs execute authorisation, calls `work`, and stores a plain JSON result in the same transaction. `execute` opens one transaction and does not retry automatically.
 - Within the receipt namespace, reusing a command ID or request key finds an existing receipt. A mismatch in either value, scope, or payload reports a conflict.
-- A matching completed receipt returns the stored JSON-equal result with `replayed: true` after replay authorisation if configured. Re-entering the same pending operation from `work` or `authorizeExecute` with matching values reports in-progress.
+- A matching completed receipt returns the stored JSON-equal result with `replayed: true` after replay authorisation if configured. Calling `executeIn(trx, operation, input)` from `work` or `authorizeExecute` with the same `trx` and matching values reports that the operation is in progress.
 - Any failure on the fresh path rolls back the receipt and writes.
 - Non-JSON values (including cycles, dates, non-finite numbers, symbols and class instances) are refused; `-0` replays as `0`.
 
@@ -47,9 +47,11 @@ flowchart TD
     D -->|Fresh| P["Parse authorisation and check execute permission, if configured"]
     P -->|Denied or invalid| I
     P -->|Allowed| G["Run operation"]
-    G --> H{"Operation succeeds?"}
+    G --> H{"Work returns a result?"}
     H -->|No| I["Rollback; retry can run fresh"]
-    H -->|Yes| J["Commit result and return"]
+    H -->|Yes| Q{"Result is valid JSON?"}
+    Q -->|No| I
+    Q -->|Yes| J["Commit result and return"]
 ```
 
 ## Code flow
