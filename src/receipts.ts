@@ -505,7 +505,7 @@ async function executeInTransaction<Payload, Authorization, Result>({
   onClaimed,
 }: TransactionRunInput<Payload, Authorization, Result>): Promise<Outcome<Result>> {
   if (!trx.isTransaction) {
-    throw new E_TRANSACTION_OWNER('executeIn requires a transaction client')
+    throw new E_TRANSACTION_OWNER()
   }
   assertSupportedConnection(trx)
   const frame = claimOperationFrame(trx)

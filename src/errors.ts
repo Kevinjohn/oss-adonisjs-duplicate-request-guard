@@ -36,8 +36,10 @@ const PLAIN_JSON =
 export class InvalidCommandValueException extends Exception {
   static code = 'E_INVALID_COMMAND_VALUE'
   static status = 400
-  constructor(message = `Command payload must be ${PLAIN_JSON}`) {
-    super(message)
+  static message = `Command payload must be ${PLAIN_JSON}`
+
+  constructor() {
+    super()
   }
 }
 
@@ -118,8 +120,10 @@ export class ReceiptNotPendingException extends Exception {
 export class TransactionOwnerException extends Exception {
   static code = 'E_TRANSACTION_OWNER'
   static status = 500
-  constructor(message: string) {
-    super(message)
+  static message = 'executeIn requires a transaction client'
+
+  constructor() {
+    super()
   }
 }
 
