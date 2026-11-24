@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-11-24
+
+- Exercise the transaction bridge with Account Kit 0.7.0.
 - Throw guard exceptions through their existing `E_*` exports and use the classes' static
   codes, statuses and fixed messages. Existing exception exports remain available.
 - Add TypeScript examples for `assertSupportedConnection`, `executeIn`, `execute` and
