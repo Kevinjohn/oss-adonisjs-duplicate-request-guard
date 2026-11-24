@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.2.3 - 2026-11-24
+
+- Clarify operation identity, nested execution in the same transaction and rollback when a work result fails validation.
+- Exercise the transaction bridge with Account Kit 0.6.1.
+
 ## 0.2.2 - 2026-11-23
 
 - Test against Account Kit 0.5.2.
