@@ -20,10 +20,10 @@ As an operation caller, I want to reuse the same operation identity on retries s
 
 - The package first acquires SQLite's writer lock, then validates the payload and scope JSON and the operation identity before any authorisation callback. `authorizeAccess` is the first authorisation callback and runs before reservation. Invalid payloads do not commit a receipt.
 - `Operation` requires `name`, `authorizeAccess`, and `work`; omitted execute/replay authorisation callbacks allow their respective path. Use only the provided `trx` for database changes.
-- A fresh reservation parses optional opaque authorisation, runs execute authorisation, calls `work`, and stores a plain JSON result in the same transaction. `execute` opens one transaction and does not retry automatically.
+- A fresh reservation calls `parseAuthorization(raw)` when present, then `authorizeExecute(context, authorization)` when present, then `work(context, authorization)`. Context contains `actorId`, `scopeId`, `payload` and `trx`; the parser receives no context. It stores a plain JSON result in the same transaction and returns the original value with `replayed: false`. `execute` opens one transaction and does not retry automatically.
 - Within the receipt namespace, reusing a command ID or request key finds an existing receipt. A mismatch in either value, scope, or payload reports a conflict.
 - A matching completed receipt returns the stored JSON-equal result with `replayed: true` after replay authorisation if configured. Calling `executeIn(trx, operation, input)` from `work` or `authorizeExecute` with the same `trx` and matching values reports that the operation is in progress.
-- Any failure on the fresh path rolls back the receipt and writes.
+- A fresh-path failure after the savepoint opens triggers rollback of its receipt and writes. If SQLite already ended the transaction, savepoint cleanup can fail; the original error is preserved and the host must abandon that transaction ([US-GUARD-06](US-GUARD-06-recover-transaction.md)).
 - Non-JSON values (including cycles, dates, non-finite numbers, symbols and class instances) are refused; `-0` replays as `0`.
 
 - Preserve the operation identity on retries. Property order does not change the payload hash. Changing the scope or a JSON value while reusing the operation identity conflicts within the same receipt namespace. Keep the payload unchanged until the call settles. Invalid input raises `E_INVALID_COMMAND_VALUE`; an invalid work result raises `E_INVALID_COMMAND_RESULT` and rolls back the work. See [identity cases](../tests/identity.spec.ts) and [JSON value cases](../tests/values.spec.ts).
@@ -42,16 +42,18 @@ flowchart TD
     D -->|Completed and matching| R{"Replay authorisation callback allows?"}
     R -->|No| R2["Refuse; stored receipt is kept"]
     R -->|Yes or callback omitted| E["Return first result"]
-    D -->|Conflict or pending| F["Return mapped conflict"]
+    D -->|Conflict or pending| F["Return mapped conflict or in-progress error"]
     D -->|Receipt schema incompatible| F2["Report schema error; operator fixes migration"]
     D -->|Fresh| P["Parse authorisation and check execute permission, if configured"]
     P -->|Denied or invalid| I
     P -->|Allowed| G["Run operation"]
     G --> H{"Work returns a result?"}
-    H -->|No| I["Rollback; retry can run fresh"]
+    H -->|No| I["Attempt rollback; if transaction is lost, abandon it before retry"]
     H -->|Yes| Q{"Result is valid JSON?"}
     Q -->|No| I
-    Q -->|Yes| J["Commit result and return"]
+    Q -->|Yes| J{"Managed commit succeeds?"}
+    J -->|Yes| K["Return fresh result"]
+    J -->|No| L["Report commit failure; host decides recovery"]
 ```
 
 ## Code flow
