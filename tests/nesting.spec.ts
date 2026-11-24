@@ -1,7 +1,7 @@
 import { test } from '@japa/runner'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { executeIn } from '../index.js'
+import { E_UNAWAITED_NESTED_COMMAND, executeIn } from '../index.js'
 import { internalHooks } from '../src/receipts.js'
 import {
   addProof,
@@ -809,7 +809,12 @@ test.group('an aborted branch admits and continues nothing', (group) => {
     const parentError = (parentResult as PromiseRejectedResult).reason as Error
     const childError = (childResult as PromiseRejectedResult).reason as Error & { code?: string }
     assert.equal(parentError.message, 'parent failed')
-    assert.equal(childError.code, 'E_UNAWAITED_NESTED_COMMAND')
+    assert.instanceOf(childError, E_UNAWAITED_NESTED_COMMAND)
+    assert.deepInclude(childError, {
+      code: 'E_UNAWAITED_NESTED_COMMAND',
+      status: 500,
+      message: 'A nested guarded command was not awaited; both commands were rolled back',
+    })
     assert.strictEqual(parentError.cause, childError)
     assert.strictEqual(childError.cause, interrupted)
     assert.deepEqual(await listReceiptStates(client), [])

@@ -6,7 +6,7 @@ As the host transaction owner, I want to recognise when SQLite has ended my tran
 **Access:** Host application using a supported Lucid connection.
 **Entry:** A failed deduplicated call, or a subsequent `executeIn(trx, operation, input)` on the affected client.
 **Documentation:** [Transaction contracts](../README.md#contracts)
-**Source:** [Transaction watcher and admission](../src/receipts.ts#L277)
+**Source:** [Transaction watcher and admission](../src/receipts.ts#L285)
 **Coverage:** [Transaction loss and recovery](../tests/lost_transaction.spec.ts)
 
 ## Acceptance criteria
@@ -41,7 +41,7 @@ flowchart TD
     L --> R["Next pool acquireSuccess clears mark for new owner"]
     A["executeInTransaction validates owner and connection; claimOperationFrame"] --> C["runClaimed: bindAndAssertOpenTransaction"]
     C --> K{"Lucid client already completed?"}
-    K -->|Yes| E["TransactionLostException; release frame"]
+    K -->|Yes| E["E_TRANSACTION_LOST; release frame"]
     K -->|No| D{"Driver reports open transaction and is not marked lost?"}
     L -.-> D
     D -->|No| E
@@ -54,4 +54,4 @@ flowchart TD
     I -->|Succeeds| J["Release frame; return provisional outcome"]
 ```
 
-**Code references:** [bindAndAssertOpenTransaction](../src/receipts.ts#L315), [runClaimed](../src/receipts.ts#L515), [TransactionLostException](../src/errors.ts#L146).
+**Code references:** [bindAndAssertOpenTransaction](../src/receipts.ts#L323), [runClaimed](../src/receipts.ts#L539), [E_TRANSACTION_LOST](../src/errors.ts#L173).

@@ -108,7 +108,7 @@ test.group('execute: conflicts', () => {
       })
       await assert.rejects(
         () => execute(client, operation, { ...makeOperationInput(1), ...change }),
-        errors.DuplicateRequestConflictException
+        errors.E_DUPLICATE_REQUEST_CONFLICT
       )
     })
   }
@@ -162,7 +162,7 @@ test.group('execute: failures roll back the reservation', () => {
     await addProof(client, 'p1')
     await assert.rejects(
       () => execute(client, operation, makeOperationInput(1, { payload: { body: undefined } })),
-      errors.InvalidCommandValueException
+      errors.E_INVALID_COMMAND_VALUE
     )
     await assert.rejects(
       () =>
@@ -171,7 +171,7 @@ test.group('execute: failures roll back the reservation', () => {
           { ...operation, work: () => undefined as never },
           { ...makeOperationInput(1), authorization: { proofToken: 'p1' } }
         ),
-      errors.InvalidCommandResultException
+      errors.E_INVALID_COMMAND_RESULT
     )
     assert.lengthOf(await listReceipts(client), 0)
   })

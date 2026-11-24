@@ -7,11 +7,10 @@ import { Exception } from '@adonisjs/core/exceptions'
 export class DuplicateRequestConflictException extends Exception {
   static code = 'E_DUPLICATE_REQUEST_CONFLICT'
   static status = 409
+  static message = 'Command identity already used'
+
   constructor() {
-    super('Command identity already used', {
-      code: DuplicateRequestConflictException.code,
-      status: DuplicateRequestConflictException.status,
-    })
+    super()
   }
 }
 
@@ -23,11 +22,10 @@ export class DuplicateRequestConflictException extends Exception {
 export class DuplicateRequestInProgressException extends Exception {
   static code = 'E_DUPLICATE_REQUEST_IN_PROGRESS'
   static status = 409
+  static message = 'Command is in progress in this transaction'
+
   constructor() {
-    super('Command is in progress in this transaction', {
-      code: DuplicateRequestInProgressException.code,
-      status: DuplicateRequestInProgressException.status,
-    })
+    super()
   }
 }
 
@@ -39,10 +37,7 @@ export class InvalidCommandValueException extends Exception {
   static code = 'E_INVALID_COMMAND_VALUE'
   static status = 400
   constructor(message = `Command payload must be ${PLAIN_JSON}`) {
-    super(message, {
-      code: InvalidCommandValueException.code,
-      status: InvalidCommandValueException.status,
-    })
+    super(message)
   }
 }
 
@@ -50,11 +45,10 @@ export class InvalidCommandValueException extends Exception {
 export class InvalidCommandResultException extends Exception {
   static code = 'E_INVALID_COMMAND_RESULT'
   static status = 500
+  static message = `Command result must be ${PLAIN_JSON}`
+
   constructor() {
-    super(`Command result must be ${PLAIN_JSON}`, {
-      code: InvalidCommandResultException.code,
-      status: InvalidCommandResultException.status,
-    })
+    super()
   }
 }
 
@@ -64,8 +58,7 @@ export class UnsupportedDialectException extends Exception {
   static status = 500
   constructor(connectionName: string, dialect: string) {
     super(
-      `Connection "${connectionName}" uses ${dialect}; guarded commands support better-sqlite3 only`,
-      { code: UnsupportedDialectException.code, status: UnsupportedDialectException.status }
+      `Connection "${connectionName}" uses ${dialect}; guarded commands support better-sqlite3 only`
     )
   }
 }
@@ -78,11 +71,11 @@ export class UnsupportedDialectException extends Exception {
 export class ConcurrentCommandException extends Exception {
   static code = 'E_CONCURRENT_COMMAND'
   static status = 500
+  static message =
+    'Another guarded command is open on this transaction; await it before starting the next one'
+
   constructor() {
-    super(
-      'Another guarded command is open on this transaction; await it before starting the next one',
-      { code: ConcurrentCommandException.code, status: ConcurrentCommandException.status }
-    )
+    super()
   }
 }
 
@@ -93,12 +86,10 @@ export class ConcurrentCommandException extends Exception {
 export class UnawaitedNestedCommandException extends Exception {
   static code = 'E_UNAWAITED_NESTED_COMMAND'
   static status = 500
+  static message = 'A nested guarded command was not awaited; both commands were rolled back'
+
   constructor(options?: { cause?: unknown }) {
-    super('A nested guarded command was not awaited; both commands were rolled back', {
-      code: UnawaitedNestedCommandException.code,
-      status: UnawaitedNestedCommandException.status,
-      cause: options?.cause,
-    })
+    super(undefined, { cause: options?.cause })
   }
 }
 
@@ -106,11 +97,11 @@ export class UnawaitedNestedCommandException extends Exception {
 export class ReceiptSchemaException extends Exception {
   static code = 'E_RECEIPT_SCHEMA'
   static status = 500
+  static message =
+    'The request_receipts table does not match the current migration; write a migration that brings it in line with the current stub (configure never rewrites an existing migration)'
+
   constructor() {
-    super(
-      'The request_receipts table does not match the current migration; write a migration that brings it in line with the current stub (configure never rewrites an existing migration)',
-      { code: ReceiptSchemaException.code, status: ReceiptSchemaException.status }
-    )
+    super()
   }
 }
 
@@ -119,10 +110,7 @@ export class ReceiptNotPendingException extends Exception {
   static code = 'E_RECEIPT_NOT_PENDING'
   static status = 500
   constructor(commandId: string, updatedRowCount: number) {
-    super(`Receipt "${commandId}" was not pending (updated ${updatedRowCount} rows)`, {
-      code: ReceiptNotPendingException.code,
-      status: ReceiptNotPendingException.status,
-    })
+    super(`Receipt "${commandId}" was not pending (updated ${updatedRowCount} rows)`)
   }
 }
 
@@ -131,10 +119,7 @@ export class TransactionOwnerException extends Exception {
   static code = 'E_TRANSACTION_OWNER'
   static status = 500
   constructor(message: string) {
-    super(message, {
-      code: TransactionOwnerException.code,
-      status: TransactionOwnerException.status,
-    })
+    super(message)
   }
 }
 
@@ -146,11 +131,11 @@ export class TransactionOwnerException extends Exception {
 export class TransactionLostException extends Exception {
   static code = 'E_TRANSACTION_LOST'
   static status = 500
+  static message =
+    'SQLite already ended this transaction; roll it back and run the command in a new one'
+
   constructor() {
-    super('SQLite already ended this transaction; roll it back and run the command in a new one', {
-      code: TransactionLostException.code,
-      status: TransactionLostException.status,
-    })
+    super()
   }
 }
 
@@ -162,10 +147,7 @@ export class UnsafeSqlitePoolException extends Exception {
   static code = 'E_UNSAFE_SQLITE_POOL'
   static status = 500
   constructor(message: string) {
-    super(message, {
-      code: UnsafeSqlitePoolException.code,
-      status: UnsafeSqlitePoolException.status,
-    })
+    super(message)
   }
 }
 

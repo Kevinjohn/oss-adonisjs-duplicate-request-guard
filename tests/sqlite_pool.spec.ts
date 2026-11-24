@@ -47,11 +47,11 @@ test.group('SQLite pool rule', () => {
     assert.equal(readMaximumPoolConnectionCount(client), 2)
     await assert.rejects(
       () => execute(client, operation, makeOperationInput(1)),
-      errors.UnsafeSqlitePoolException
+      errors.E_UNSAFE_SQLITE_POOL
     )
     await assert.rejects(
       () => client.transaction((trx) => executeIn(trx, operation, makeOperationInput(1))),
-      errors.UnsafeSqlitePoolException
+      errors.E_UNSAFE_SQLITE_POOL
     )
     assert.equal(calls.access, 0)
   })
@@ -79,7 +79,7 @@ test.group('SQLite pool rule', () => {
       const { operation, calls } = makeNoteOperation()
       await assert.rejects(
         () => execute(client, operation, makeOperationInput(1)),
-        errors.UnsupportedDialectException
+        errors.E_UNSUPPORTED_DIALECT
       )
       assert.equal(calls.access, 0)
     } finally {

@@ -6,7 +6,7 @@ As an application operator, I want to prune completed receipts only after client
 **Access:** Host scheduler/operator with a supported better-sqlite3 connection and authority to choose retention.
 **Entry:** `pruneReceipts(client, { olderThan })`; no package scheduler or Ace pruning command is provided.
 **Documentation:** [Pruning contract](../README.md#contracts).
-**Source:** [pruneReceipts](../src/receipts.ts#L716).
+**Source:** [pruneReceipts](../src/receipts.ts#L758).
 **Coverage:** [Prune tests](../tests/prune.spec.ts).
 
 ## Acceptance criteria
@@ -46,4 +46,4 @@ flowchart TD
     E -->|Error| X
 ```
 
-**Code references:** [pruneReceipts](../src/receipts.ts#L716), [PruneOptions](../src/types.ts#L80), [pruning tests](../tests/prune.spec.ts).
+**Code references:** [pruneReceipts](../src/receipts.ts#L758), [PruneOptions](../src/types.ts#L80), [pruning tests](../tests/prune.spec.ts).

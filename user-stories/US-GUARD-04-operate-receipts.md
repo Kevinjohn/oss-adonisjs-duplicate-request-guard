@@ -80,4 +80,4 @@ flowchart TD
     I -->|Database path cannot be inspected| Q2["Filesystem error surfaces unchanged; nothing registered"]
 ```
 
-**Code references:** [Configure hook](../configure.ts), [migration](../stubs/migrations/create_request_receipts_table.stub), [connection check](../src/receipts.ts#L145).
+**Code references:** [Configure hook](../configure.ts), [migration](../stubs/migrations/create_request_receipts_table.stub), [connection check](../src/receipts.ts#L153).

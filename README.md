@@ -181,7 +181,11 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
 
 ## Errors
 
-`errors.*` / `E_*` exports, all `@adonisjs/core` exceptions: `E_DUPLICATE_REQUEST_CONFLICT` (409),
+Match a guard failure by its `code` or with `instanceof errors.E_<CODE>`, for example
+`error instanceof errors.E_DUPLICATE_REQUEST_CONFLICT`. The same code-named constructors are
+available as named imports from the package.
+
+The `@adonisjs/core` exceptions are `E_DUPLICATE_REQUEST_CONFLICT` (409),
 `E_DUPLICATE_REQUEST_IN_PROGRESS` (409, only on re-entry from the operation's own `work` or authorisation callbacks),
 `E_INVALID_COMMAND_VALUE` (400), `E_CONCURRENT_COMMAND`, `E_UNAWAITED_NESTED_COMMAND`,
 `E_INVALID_COMMAND_RESULT`, `E_RECEIPT_NOT_PENDING`,

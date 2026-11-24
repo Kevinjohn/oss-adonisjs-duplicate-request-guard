@@ -76,7 +76,7 @@ flowchart TD
     E --> F{"INSERT reserved a row?"}
     E -->|Error| Y
     F -->|No| G["Find receipt in the namespace by command ID or request key, then compare operation identity and hash"]
-    G -->|No matching row| S["ReceiptSchemaException"]
+    G -->|No matching row| S["E_RECEIPT_SCHEMA"]
     S --> Y
     G -->|Mismatch or pending| X["conflict or in-progress error"]
     G -->|Completed and matching| L["authorizeReplay if provided; build replayed=true outcome"]
@@ -97,4 +97,4 @@ flowchart TD
     Y --> T
 ```
 
-**Code references:** [API](../index.ts), [execute](../src/receipts.ts#L695), [Operation](../src/types.ts#L41)
+**Code references:** [API](../index.ts), [execute](../src/receipts.ts#L728), [Operation](../src/types.ts#L41)
