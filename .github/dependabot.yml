@@ -1,3 +1,5 @@
+# PAUSED: every open-pull-requests-limit is 0 while the repositories are baselined.
+# To resume, restore the previous limits (see the commit that added this note).
 # Dependabot opens one pull request a week with patch updates to npm packages.
 # Minor and major updates are made by hand.
 version: 2
@@ -12,4 +14,4 @@ updates:
     ignore:
       - dependency-name: '*'
         update-types: ['version-update:semver-major', 'version-update:semver-minor']
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
