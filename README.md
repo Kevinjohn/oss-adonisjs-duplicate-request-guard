@@ -1,5 +1,7 @@
 # @kevinjohn/adonisjs-duplicate-request-guard
 
+This README describes the unreleased API. The installation command below selects the latest published archive, which does not yet include these changes. For the installed v0.2.3 archive, use the [v0.2.3 error reference](https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/blob/v0.2.3/README.md).
+
 Run each request once. When the same request arrives again (a double-click, or a retry after a
 dropped connection), the client gets the first result back instead of a second execution.
 
@@ -184,8 +186,6 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
 Match a guard failure by its `code` or with `instanceof errors.E_<CODE>`, for example
 `error instanceof errors.E_DUPLICATE_REQUEST_CONFLICT`. The same code-named constructors are
 available as named imports from the package.
-
-This section describes the unreleased exception API. For the installed v0.2.3 archive, use the [v0.2.3 error reference](https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/blob/v0.2.3/README.md).
 
 The `@adonisjs/core` exceptions are `E_DUPLICATE_REQUEST_CONFLICT` (409),
 `E_DUPLICATE_REQUEST_IN_PROGRESS` (409, only on re-entry from the operation's own `work` or authorisation callbacks),
