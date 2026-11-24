@@ -8,6 +8,9 @@ import {
   E_DUPLICATE_REQUEST_IN_PROGRESS,
   E_INVALID_COMMAND_RESULT,
   E_INVALID_COMMAND_VALUE,
+  E_INVALID_COMMAND_IDENTITY,
+  E_MULTIPLE_SQLITE_WRITERS,
+  E_TRANSACTION_ALREADY_OWNED,
   E_RECEIPT_NOT_PENDING,
   E_RECEIPT_SCHEMA,
   E_CONCURRENT_COMMAND,
@@ -94,9 +97,7 @@ const refuseResult = (): never => {
 function assertIdentity(...identity: unknown[]) {
   // An untyped host can forward a number or nothing at all: refuse it rather than throw a TypeError.
   if (!identity.every((value) => typeof value === 'string' && value.isWellFormed())) {
-    throw new E_INVALID_COMMAND_VALUE(
-      'Command id and request key must be well-formed Unicode strings'
-    )
+    throw new E_INVALID_COMMAND_IDENTITY()
   }
 }
 
@@ -181,7 +182,7 @@ export function assertSupportedConnection(client: QueryClientContract | Transact
   }
   const other = [...writers].find((writer) => writer !== connection)
   if (other) {
-    throw new E_UNSAFE_SQLITE_POOL(
+    throw new E_MULTIPLE_SQLITE_WRITERS(
       `SQLite connections "${other.name}" and "${connection.name}" share ${file}; run guarded commands through one connection`
     )
   }
@@ -731,9 +732,7 @@ export async function execute<Payload, Authorization, Result>(
   input: ExecuteInput<Payload>
 ): Promise<Outcome<Result>> {
   if (client.isTransaction) {
-    throw new E_TRANSACTION_OWNER(
-      'execute owns its transaction; inside a host transaction use executeIn'
-    )
+    throw new E_TRANSACTION_ALREADY_OWNED()
   }
   assertSupportedConnection(client)
   const admitted = snapshotInput(input)

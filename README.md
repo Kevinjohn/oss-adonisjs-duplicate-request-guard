@@ -155,7 +155,7 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
   attempt replays that result.
 - **SQLite writers.** better-sqlite3 waits for locks synchronously, so a second in-process writer
   stalls the event loop. `E_UNSAFE_SQLITE_POOL` is thrown when `pool.max` is not 1 (the knex
-  default), or when a second open Lucid connection (any name, any Database instance, symlinks
+  default). `E_MULTIPLE_SQLITE_WRITERS` is thrown when a second open Lucid connection (any name, any Database instance, symlinks
   resolved, surrounding whitespace trimmed as the driver does) runs operations on a file another open
   connection already used. Hard-linked paths and `file:` URI filenames are not detected. Closing a
   connection releases its file; every `:memory:` or blank-filename connection is its own database. `executeIn` first takes the
@@ -174,7 +174,7 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
 - **Identity scope.** Command ids and request keys are scoped to one actor's operation. Another
   actor using the same ids runs its own operation and learns nothing about yours. Command ids and
   request keys must be well-formed Unicode strings (no lone surrogates); others are refused with
-  `E_INVALID_COMMAND_VALUE` (400) before `authorizeAccess`.
+  `E_INVALID_COMMAND_IDENTITY` (400) before `authorizeAccess`.
 - **Pruning.** `pruneReceipts(db.connection(), { olderThan })` deletes completed receipts updated
   strictly before `olderThan`. A pruned identity executes fresh again, so keep receipts as long as
   clients may retry.
@@ -187,7 +187,7 @@ available as named imports from the package.
 
 The `@adonisjs/core` exceptions are `E_DUPLICATE_REQUEST_CONFLICT` (409),
 `E_DUPLICATE_REQUEST_IN_PROGRESS` (409, only on re-entry from the operation's own `work` or authorisation callbacks),
-`E_INVALID_COMMAND_VALUE` (400), `E_CONCURRENT_COMMAND`, `E_UNAWAITED_NESTED_COMMAND`,
+`E_INVALID_COMMAND_VALUE` (400) for payloads, `E_INVALID_COMMAND_IDENTITY` (400) for command ids or request keys, `E_CONCURRENT_COMMAND`, `E_UNAWAITED_NESTED_COMMAND`,
 `E_INVALID_COMMAND_RESULT`, `E_RECEIPT_NOT_PENDING`,
-`E_RECEIPT_SCHEMA` (receipts table from an older stub), `E_TRANSACTION_LOST`, `E_TRANSACTION_OWNER`,
-`E_UNSAFE_SQLITE_POOL`, `E_UNSUPPORTED_DIALECT` (500).
+`E_RECEIPT_SCHEMA` (receipts table from an older stub), `E_TRANSACTION_LOST`, `E_TRANSACTION_OWNER` (missing caller-owned transaction), `E_TRANSACTION_ALREADY_OWNED` (managed call received a transaction),
+`E_UNSAFE_SQLITE_POOL`, `E_MULTIPLE_SQLITE_WRITERS`, `E_UNSUPPORTED_DIALECT` (500).

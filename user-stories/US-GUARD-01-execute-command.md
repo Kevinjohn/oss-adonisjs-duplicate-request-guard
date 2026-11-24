@@ -26,7 +26,7 @@ As an operation caller, I want to reuse the same operation identity on retries s
 - Any failure on the fresh path rolls back the receipt and writes.
 - Non-JSON values (including cycles, dates, non-finite numbers, symbols and class instances) are refused; `-0` replays as `0`.
 
-- Preserve the operation identity on retries. Property order does not change the payload hash. Changing the scope or a JSON value while reusing the operation identity conflicts within the same receipt namespace. Keep the payload unchanged until the call settles. Invalid input raises `E_INVALID_COMMAND_VALUE`; an invalid work result raises `E_INVALID_COMMAND_RESULT` and rolls back the work. See [identity cases](../tests/identity.spec.ts) and [JSON value cases](../tests/values.spec.ts).
+- Preserve the operation identity on retries. Property order does not change the payload hash. Changing the scope or a JSON value while reusing the operation identity conflicts within the same receipt namespace. Keep the payload unchanged until the call settles. Invalid payloads raise `E_INVALID_COMMAND_VALUE`; malformed command ids or request keys raise `E_INVALID_COMMAND_IDENTITY`; an invalid work result raises `E_INVALID_COMMAND_RESULT` and rolls back the work. See [identity cases](../tests/identity.spec.ts) and [JSON value cases](../tests/values.spec.ts).
 
 ## User flow
 

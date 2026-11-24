@@ -116,7 +116,7 @@ test.group('shared SQLite file detection', () => {
     try {
       await assert.rejects(
         () => execute(other.connection(), operation, makeOperationInput(2)),
-        errors.E_UNSAFE_SQLITE_POOL
+        errors.E_MULTIPLE_SQLITE_WRITERS
       )
     } finally {
       await other.manager.closeAll()
@@ -138,7 +138,7 @@ test.group('shared SQLite file detection', () => {
     try {
       await assert.rejects(
         () => execute(other.connection(), operation, makeOperationInput(2)),
-        errors.E_UNSAFE_SQLITE_POOL
+        errors.E_MULTIPLE_SQLITE_WRITERS
       )
     } finally {
       await other.manager.closeAll()
@@ -246,11 +246,11 @@ test.group('API surface', () => {
     })
     await assert.rejects(
       () => execute(db.connection('second'), operation, makeOperationInput(2)),
-      errors.E_UNSAFE_SQLITE_POOL
+      errors.E_MULTIPLE_SQLITE_WRITERS
     )
     await assert.rejects(
       () => pruneReceipts(db.connection('second'), { olderThan: new Date() }),
-      errors.E_UNSAFE_SQLITE_POOL
+      errors.E_MULTIPLE_SQLITE_WRITERS
     )
   })
 })

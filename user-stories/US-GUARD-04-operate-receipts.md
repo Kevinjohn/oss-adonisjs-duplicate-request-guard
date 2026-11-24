@@ -76,7 +76,7 @@ flowchart TD
     G["execute, executeIn, pruneReceipts or explicit host boot check"] --> H["assertSupportedConnection"]
     H --> I["Validate dialect, pool and resolved-file ownership"]
     I -->|Valid| J["Continue to operation"]
-    I -->|Invalid| Q["E_UNSUPPORTED_DIALECT or E_UNSAFE_SQLITE_POOL"]
+    I -->|Invalid| Q["E_UNSUPPORTED_DIALECT, E_UNSAFE_SQLITE_POOL or E_MULTIPLE_SQLITE_WRITERS"]
     I -->|Database path cannot be inspected| Q2["Filesystem error surfaces unchanged; nothing registered"]
 ```
 

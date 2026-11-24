@@ -231,7 +231,7 @@ test.group('executeIn inside Account Kit 0.6.1 authentication.withCurrent', (gro
         fixture.kit.authentication.withCurrent(credential, ({ trx }) =>
           execute(trx as never, operation, command)
         ),
-      errors.E_TRANSACTION_OWNER
+      errors.E_TRANSACTION_ALREADY_OWNED
     )
   })
 })

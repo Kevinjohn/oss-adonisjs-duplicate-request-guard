@@ -37,7 +37,7 @@ test.group('transaction owners', () => {
     const { operation, calls } = makeNoteOperation()
     await assert.rejects(
       () => client.transaction((trx) => execute(trx as never, operation, makeOperationInput(1))),
-      errors.E_TRANSACTION_OWNER
+      errors.E_TRANSACTION_ALREADY_OWNED
     )
     assert.equal(calls.access, 0)
   })

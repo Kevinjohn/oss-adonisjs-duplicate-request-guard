@@ -32,7 +32,7 @@ export class DuplicateRequestInProgressException extends Exception {
 const PLAIN_JSON =
   'plain JSON data (plain objects, arrays, strings, finite numbers, booleans, null)'
 
-/** The client's payload is not plain JSON data, or its command identity is not well-formed text. */
+/** The client's payload is not plain JSON data. */
 export class InvalidCommandValueException extends Exception {
   static code = 'E_INVALID_COMMAND_VALUE'
   static status = 400
@@ -114,7 +114,7 @@ export class ReceiptNotPendingException extends Exception {
   }
 }
 
-/** The caller used the wrong transaction owner: executeIn needs a transaction, execute must not get one. */
+/** executeIn received a base connection instead of a caller-owned transaction. */
 export class TransactionOwnerException extends Exception {
   static code = 'E_TRANSACTION_OWNER'
   static status = 500
@@ -140,8 +140,8 @@ export class TransactionLostException extends Exception {
 }
 
 /**
- * More than one in-process connection could write the SQLite file (a pool above one, or a second
- * named connection on the same file); better-sqlite3 would stall the event loop on its lock.
+ * The connection pool allows more than one writer; better-sqlite3 would stall the event loop
+ * while a second pooled connection waits for the first writer.
  */
 export class UnsafeSqlitePoolException extends Exception {
   static code = 'E_UNSAFE_SQLITE_POOL'
@@ -175,3 +175,39 @@ export const E_TRANSACTION_LOST = TransactionLostException
 export const E_TRANSACTION_OWNER = TransactionOwnerException
 /** Alias for the unsafe SQLite pool exception. */
 export const E_UNSAFE_SQLITE_POOL = UnsafeSqlitePoolException
+
+/** The command id or request key is not well-formed Unicode text. */
+export class InvalidCommandIdentityException extends Exception {
+  static code = 'E_INVALID_COMMAND_IDENTITY'
+  static status = 400
+  static message = 'Command id and request key must be well-formed Unicode strings'
+
+  constructor() {
+    super()
+  }
+}
+
+/** More than one named connection can write the same SQLite database file. */
+export class MultipleSqliteWritersException extends Exception {
+  static code = 'E_MULTIPLE_SQLITE_WRITERS'
+  static status = 500
+
+  constructor(message: string) {
+    super(message)
+  }
+}
+
+/** execute received a transaction even though it owns the transaction it creates. */
+export class TransactionAlreadyOwnedException extends Exception {
+  static code = 'E_TRANSACTION_ALREADY_OWNED'
+  static status = 500
+  static message = 'execute owns its transaction; inside a host transaction use executeIn'
+
+  constructor() {
+    super()
+  }
+}
+
+export const E_INVALID_COMMAND_IDENTITY = InvalidCommandIdentityException
+export const E_MULTIPLE_SQLITE_WRITERS = MultipleSqliteWritersException
+export const E_TRANSACTION_ALREADY_OWNED = TransactionAlreadyOwnedException

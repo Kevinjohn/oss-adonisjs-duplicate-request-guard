@@ -390,7 +390,7 @@ test.group('identity strings', () => {
           authorization: { proofToken: 'p1' },
         } as ReturnType<typeof makeOperationInput> & { authorization: unknown }
         const error = await execute(client, operation, request).catch((e) => e)
-        assert.instanceOf(error, errors.E_INVALID_COMMAND_VALUE)
+        assert.instanceOf(error, errors.E_INVALID_COMMAND_IDENTITY)
         assert.equal(error.status, 400)
         assert.match(error.message, /well-formed/)
         assert.equal(calls.access, 0)
