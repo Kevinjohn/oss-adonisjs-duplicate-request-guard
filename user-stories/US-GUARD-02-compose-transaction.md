@@ -19,7 +19,7 @@ As a transaction owner, I want a deduplicated operation to share my transaction 
 - Original SQLite transaction-abort errors propagate; failed savepoint cleanup is attached as `cause` when possible.
 - Host queries issued on `trx` while an operation is open are inside its savepoint and roll back if that operation fails.
 
-- A savepoint success remains provisional until the host commits. If Account Kit reruns its transaction after a busy error, even a completed reservation in the rolled-back attempt runs fresh. The [Account Kit integration tests](../tests/kit.spec.ts) cover contention, rollback, commit and replay; their fixture is configured for the pinned 0.6.1 release. If the underlying transaction ends unexpectedly, follow [US-GUARD-06](US-GUARD-06-recover-transaction.md).
+- A savepoint success remains provisional until the host commits. If Account Kit reruns its transaction after a busy error, even a completed reservation in the rolled-back attempt runs fresh. The [Account Kit integration tests](../tests/kit.spec.ts) cover contention, rollback, commit and replay; their fixture is configured for the pinned 0.7.0 release. If the underlying transaction ends unexpectedly, follow [US-GUARD-06](US-GUARD-06-recover-transaction.md).
 
 ## User flow
 
