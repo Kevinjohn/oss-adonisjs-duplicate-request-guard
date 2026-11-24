@@ -58,4 +58,4 @@ flowchart TD
     C -->|Sibling, lost context or late child| H["Concurrency or unawaited error immediately"]
 ```
 
-**Code references:** [executeIn](../src/receipts.ts#L435), [descendant abort](../src/receipts.ts#L378), [savepoint and nested execution](../src/receipts.ts#L517), [Operation](../src/types.ts#L41), [ExecuteInput](../src/types.ts#L56)
+**Code references:** [executeIn](../src/receipts.ts#L457), [descendant abort](../src/receipts.ts#L386), [savepoint and nested execution](../src/receipts.ts#L539), [Operation](../src/types.ts#L41), [ExecuteInput](../src/types.ts#L56)

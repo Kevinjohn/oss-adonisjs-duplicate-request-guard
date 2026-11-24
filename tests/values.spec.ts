@@ -33,7 +33,7 @@ test.group('only plain JSON data is accepted', () => {
       await assert.rejects(
         () =>
           execute(client, op, { ...makeOperationInput(1), authorization: { proofToken: 'p1' } }),
-        errors.InvalidCommandResultException
+        errors.E_INVALID_COMMAND_RESULT
       )
     }
     assert.lengthOf(await listReceipts(client), 0)
@@ -60,7 +60,7 @@ test.group('only plain JSON data is accepted', () => {
       await assert.rejects(
         () =>
           execute(client, op, { ...makeOperationInput(1), authorization: { proofToken: 'p1' } }),
-        errors.InvalidCommandResultException
+        errors.E_INVALID_COMMAND_RESULT
       )
     }
     assert.lengthOf(await listReceipts(client), 0)
@@ -95,7 +95,7 @@ test.group('only plain JSON data is accepted', () => {
         ...makeOperationInput(1),
         authorization: { proofToken: 'p1' },
       }).catch((e) => e)
-      if (!(error instanceof errors.InvalidCommandResultException)) accepted.push(name)
+      if (!(error instanceof errors.E_INVALID_COMMAND_RESULT)) accepted.push(name)
     }
     assert.deepEqual(accepted, [])
     assert.equal(reads, 0)
@@ -108,7 +108,7 @@ test.group('only plain JSON data is accepted', () => {
     const payload = Object.defineProperty({ body: 'x' }, 'n', { get: () => 1, enumerable: true })
     await assert.rejects(
       () => execute(client, operation, makeOperationInput(1, { payload })),
-      errors.InvalidCommandValueException
+      errors.E_INVALID_COMMAND_VALUE
     )
     assert.equal(calls.access, 0)
   })
@@ -137,7 +137,7 @@ test.group('only plain JSON data is accepted', () => {
       op,
       makeOperationInput(1, { payload: { body: 'x' } })
     ).catch((e) => e)
-    assert.instanceOf(conflict, errors.DuplicateRequestConflictException)
+    assert.instanceOf(conflict, errors.E_DUPLICATE_REQUEST_CONFLICT)
   })
 
   test('an undefined result is a server error, distinct from a bad payload', async ({ assert }) => {
@@ -149,7 +149,7 @@ test.group('only plain JSON data is accepted', () => {
       { ...operation, work: () => undefined as never },
       { ...makeOperationInput(1), authorization: { proofToken: 'p1' } }
     ).catch((e) => e)
-    assert.instanceOf(error, errors.InvalidCommandResultException)
+    assert.instanceOf(error, errors.E_INVALID_COMMAND_RESULT)
     assert.equal(error.status, 500)
     assert.equal(error.code, 'E_INVALID_COMMAND_RESULT')
   })
@@ -182,7 +182,7 @@ test.group('only plain JSON data is accepted', () => {
         operation,
         makeOperationInput(1, { payload: { body: 'x', extra: value } })
       ).catch((e) => e)
-      assert.instanceOf(error, errors.InvalidCommandValueException)
+      assert.instanceOf(error, errors.E_INVALID_COMMAND_VALUE)
       assert.equal(error.status, 400)
       assert.equal(calls.work, 0)
       assert.lengthOf(await listReceipts(client), 0)
@@ -200,7 +200,7 @@ test.group('only plain JSON data is accepted', () => {
     for (const extra of [{}, [], 0, '', false, 'null']) {
       await assert.rejects(
         () => execute(client, operation, makeOperationInput(1, { payload: { body: 'x', extra } })),
-        errors.DuplicateRequestConflictException
+        errors.E_DUPLICATE_REQUEST_CONFLICT
       )
     }
   })
@@ -237,7 +237,7 @@ test.group('schema and value edges', () => {
     })
     await assert.rejects(
       () => execute(client, operation, makeOperationInput(1, { actorId: 'bob' })),
-      errors.ReceiptSchemaException
+      errors.E_RECEIPT_SCHEMA
     )
   })
 
@@ -287,7 +287,7 @@ test.group('schema and value edges', () => {
           operation,
           makeOperationInput(1, { actorId: 'mallory', payload: { n: Number.NaN } })
         ),
-      errors.InvalidCommandValueException
+      errors.E_INVALID_COMMAND_VALUE
     )
     assert.equal(calls.access, 0)
   })

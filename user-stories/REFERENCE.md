@@ -16,7 +16,7 @@
 - Detailed contracts and host integration examples: [README](../README.md). There is no user-facing guide or built-in route.
 - Test evidence: [`tests/execute.spec.ts`](../tests/execute.spec.ts), [`tests/rollback.spec.ts`](../tests/rollback.spec.ts), [`tests/nesting.spec.ts`](../tests/nesting.spec.ts), [`tests/connections.spec.ts`](../tests/connections.spec.ts), [`tests/prune.spec.ts`](../tests/prune.spec.ts).
 
-For retry decisions distinguish an [identity conflict](../tests/identity.spec.ts) or [invalid JSON value](../tests/values.spec.ts), [transaction ownership and pending receipts](../tests/owners.spec.ts), and [transaction loss](../tests/lost_transaction.spec.ts). The [exception definitions](../src/errors.ts) supply the named constructors and their `E_*` aliases.
+For retry decisions distinguish an [identity conflict](../tests/identity.spec.ts) or [invalid JSON value](../tests/values.spec.ts), [transaction ownership and pending receipts](../tests/owners.spec.ts), and [transaction loss](../tests/lost_transaction.spec.ts). Match the `code` or use `instanceof errors.E_<CODE>` for the corresponding [exception](../src/errors.ts).
 
 ## Availability
 

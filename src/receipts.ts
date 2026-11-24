@@ -4,25 +4,25 @@ import { realpathSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { QueryClientContract, TransactionClientContract } from '@adonisjs/lucid/types/database'
 import {
-  DuplicateRequestConflictException,
-  DuplicateRequestInProgressException,
-  InvalidCommandResultException,
-  InvalidCommandValueException,
-  ReceiptNotPendingException,
-  ReceiptSchemaException,
-  ConcurrentCommandException,
-  UnawaitedNestedCommandException,
-  TransactionLostException,
-  TransactionOwnerException,
-  UnsafeSqlitePoolException,
-  UnsupportedDialectException,
+  E_DUPLICATE_REQUEST_CONFLICT,
+  E_DUPLICATE_REQUEST_IN_PROGRESS,
+  E_INVALID_COMMAND_RESULT,
+  E_INVALID_COMMAND_VALUE,
+  E_RECEIPT_NOT_PENDING,
+  E_RECEIPT_SCHEMA,
+  E_CONCURRENT_COMMAND,
+  E_UNAWAITED_NESTED_COMMAND,
+  E_TRANSACTION_LOST,
+  E_TRANSACTION_OWNER,
+  E_UNSAFE_SQLITE_POOL,
+  E_UNSUPPORTED_DIALECT,
 } from './errors.js'
 import type { ExecuteInput, Operation, OperationContext, Outcome, PruneOptions } from './types.js'
 
 /** Table created by the published migration. */
 export const RECEIPTS_TABLE = 'request_receipts'
 
-/** The only dialect the package is tested on. Others are refused (see UnsupportedDialectException). */
+/** The only dialect the package is tested on. Others are refused (see E_UNSUPPORTED_DIALECT). */
 const SUPPORTED_DIALECT = 'better-sqlite3'
 
 /**
@@ -80,10 +80,10 @@ function serializeCanonicalJson(
 }
 
 const refusePayload = (): never => {
-  throw new InvalidCommandValueException()
+  throw new E_INVALID_COMMAND_VALUE()
 }
 const refuseResult = (): never => {
-  throw new InvalidCommandResultException()
+  throw new E_INVALID_COMMAND_RESULT()
 }
 
 /**
@@ -94,7 +94,7 @@ const refuseResult = (): never => {
 function assertIdentity(...identity: unknown[]) {
   // An untyped host can forward a number or nothing at all: refuse it rather than throw a TypeError.
   if (!identity.every((value) => typeof value === 'string' && value.isWellFormed())) {
-    throw new InvalidCommandValueException(
+    throw new E_INVALID_COMMAND_VALUE(
       'Command id and request key must be well-formed Unicode strings'
     )
   }
@@ -141,10 +141,18 @@ function resolveDatabasePath(filename: string) {
  * one connection, or a second named connection on a SQLite file another connection already uses.
  * better-sqlite3 waits for locks synchronously, so a second in-process writer stalls the event loop
  * while the transaction holding the lock cannot commit.
+ *
+ * @example
+ * ```ts
+ * import { assertSupportedConnection } from '@kevinjohn/adonisjs-duplicate-request-guard'
+ * import db from '@adonisjs/lucid/services/db'
+ *
+ * assertSupportedConnection(db.connection())
+ * ```
  */
 export function assertSupportedConnection(client: QueryClientContract | TransactionClientContract) {
   if (client.dialect.name !== SUPPORTED_DIALECT) {
-    throw new UnsupportedDialectException(client.connectionName, client.dialect.name)
+    throw new E_UNSUPPORTED_DIALECT(client.connectionName, client.dialect.name)
   }
   const config = (
     client.getWriteClient() as unknown as {
@@ -153,7 +161,7 @@ export function assertSupportedConnection(client: QueryClientContract | Transact
   ).client.config
   const maximumConnectionCount = config.pool?.max ?? 1
   if (maximumConnectionCount !== 1) {
-    throw new UnsafeSqlitePoolException(
+    throw new E_UNSAFE_SQLITE_POOL(
       `SQLite connection "${client.connectionName}" allows ${maximumConnectionCount} pooled connections; guarded commands require pool.max = 1`
     )
   }
@@ -173,7 +181,7 @@ export function assertSupportedConnection(client: QueryClientContract | Transact
   }
   const other = [...writers].find((writer) => writer !== connection)
   if (other) {
-    throw new UnsafeSqlitePoolException(
+    throw new E_UNSAFE_SQLITE_POOL(
       `SQLite connections "${other.name}" and "${connection.name}" share ${file}; run guarded commands through one connection`
     )
   }
@@ -208,7 +216,7 @@ export async function completeReceipt(
       .where('state', 'pending')
       .update({ state: 'completed', result: serialized, updated_at: new Date().toISOString() })
   )
-  if (updatedRowCount !== 1) throw new ReceiptNotPendingException(commandId, updatedRowCount)
+  if (updatedRowCount !== 1) throw new E_RECEIPT_NOT_PENDING(commandId, updatedRowCount)
 }
 
 /** An open operation on a transaction. Its savepoint is on top of the trx's savepoint stack. */
@@ -315,7 +323,7 @@ function acquireBoundDriverConnection(trx: TransactionClientContract) {
 async function bindAndAssertOpenTransaction(frame: Frame) {
   // A transaction the host already completed no longer owns its connection: the pool may have
   // handed it to a waiting transaction, which a mark here would refuse.
-  if (frame.trx.isCompleted) throw new TransactionLostException()
+  if (frame.trx.isCompleted) throw new E_TRANSACTION_LOST()
   const connection = (frame.connection = await acquireBoundDriverConnection(frame.trx))
   // The watcher may have been installed after the pool handed this connection out.
   watchesByKnexClient.get(requireKnexClient(frame.trx))!.current = connection
@@ -341,11 +349,11 @@ function claimOperationFrame(trx: TransactionClientContract): Frame {
   const caller = operationFrame.getStore()
   const innermost = stack.at(-1)
   if (innermost !== (caller?.trx === trx ? caller : undefined)) {
-    throw new ConcurrentCommandException()
+    throw new E_CONCURRENT_COMMAND()
   }
   // A child that arrives after its parent stopped waiting for children would outlive it; one from an
   // aborted operation would run work that is about to be rolled back.
-  if (innermost?.closing || innermost?.aborted) throw new UnawaitedNestedCommandException()
+  if (innermost?.closing || innermost?.aborted) throw new E_UNAWAITED_NESTED_COMMAND()
   const frame: Frame = {
     trx,
     aborted: false,
@@ -410,9 +418,9 @@ async function abortChildren(frame: Frame) {
  */
 function assertLive(frame: Frame) {
   if (frame.connection && lostConnections.has(frame.connection)) {
-    throw new TransactionLostException()
+    throw new E_TRANSACTION_LOST()
   }
-  if (frame.aborted) throw new UnawaitedNestedCommandException()
+  if (frame.aborted) throw new E_UNAWAITED_NESTED_COMMAND()
 }
 
 /**
@@ -422,7 +430,7 @@ function assertLive(frame: Frame) {
 function assertSettled(frame: Frame) {
   assertLive(frame)
   if (openFramesByTransaction.get(frame.trx)?.at(-1) !== frame)
-    throw new UnawaitedNestedCommandException()
+    throw new E_UNAWAITED_NESTED_COMMAND()
 }
 
 /**
@@ -431,6 +439,20 @@ function assertSettled(frame: Frame) {
  * authorizeExecute, work, complete (fresh). Everything after validation runs under a savepoint, so
  * a failure rolls back the pending row and the work even if the host swallows it and commits.
  * Await it before issuing any other query on `trx`.
+ *
+ * @example
+ * ```ts
+ * import { executeIn, type ExecuteInput } from '@kevinjohn/adonisjs-duplicate-request-guard'
+ * import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
+ * import { createNote } from '#operations/create_note'
+ *
+ * export async function createNoteInTransaction(
+ *   trx: TransactionClientContract,
+ *   input: ExecuteInput<{ body: string }>
+ * ) {
+ *   return executeIn(trx, createNote, input)
+ * }
+ * ```
  */
 export function executeIn<Payload, Authorization, Result>(
   trx: TransactionClientContract,
@@ -482,7 +504,7 @@ async function executeInTransaction<Payload, Authorization, Result>({
   onClaimed,
 }: TransactionRunInput<Payload, Authorization, Result>): Promise<Outcome<Result>> {
   if (!trx.isTransaction) {
-    throw new TransactionOwnerException('executeIn requires a transaction client')
+    throw new E_TRANSACTION_OWNER('executeIn requires a transaction client')
   }
   assertSupportedConnection(trx)
   const frame = claimOperationFrame(trx)
@@ -495,8 +517,8 @@ async function executeInTransaction<Payload, Authorization, Result>({
       .run(frame, () => runClaimed({ trx, frame, operation, input: admitted }))
       .catch((error: unknown) => {
         // An enclosing operation rolled back over this one: report that, not the knock-on failure.
-        if (frame.aborted && !(error instanceof UnawaitedNestedCommandException)) {
-          throw new UnawaitedNestedCommandException({ cause: error })
+        if (frame.aborted && !(error instanceof E_UNAWAITED_NESTED_COMMAND)) {
+          throw new E_UNAWAITED_NESTED_COMMAND({ cause: error })
         }
         throw error
       })
@@ -649,7 +671,7 @@ async function reserveAndRun<Payload, Authorization, Result>({
       })
     // The insert lost to a unique index, yet no row in this namespace matches: the table still
     // has a unique index from an older stub (command_id across every actor).
-    if (matchingReceipts.length === 0) throw new ReceiptSchemaException()
+    if (matchingReceipts.length === 0) throw new E_RECEIPT_SCHEMA()
     // Two matching rows always differ in command_id or request_key.
     const row = matchingReceipts[0]
     if (
@@ -657,9 +679,9 @@ async function reserveAndRun<Payload, Authorization, Result>({
       row.request_key !== input.command.requestKey ||
       row.payload_hash !== payloadHash
     ) {
-      throw new DuplicateRequestConflictException()
+      throw new E_DUPLICATE_REQUEST_CONFLICT()
     }
-    if (row.state !== 'completed') throw new DuplicateRequestInProgressException()
+    if (row.state !== 'completed') throw new E_DUPLICATE_REQUEST_IN_PROGRESS()
     assertLive(frame)
     // The authorisation callback gets its own copy: whatever it does to it, the caller receives the stored result.
     await operation.authorizeReplay?.(context, JSON.parse(row.result) as Result)
@@ -691,6 +713,17 @@ async function reserveAndRun<Payload, Authorization, Result>({
 /**
  * Managed owner: opens and commits its own transaction, once. It does not retry. Do not call it
  * inside another transaction owner, and do not wrap it in a retrier.
+ *
+ * @example
+ * ```ts
+ * import { execute, type ExecuteInput } from '@kevinjohn/adonisjs-duplicate-request-guard'
+ * import db from '@adonisjs/lucid/services/db'
+ * import { createNote } from '#operations/create_note'
+ *
+ * export async function submitNote(input: ExecuteInput<{ body: string }>) {
+ *   return execute(db.connection(), createNote, input)
+ * }
+ * ```
  */
 export async function execute<Payload, Authorization, Result>(
   client: QueryClientContract,
@@ -698,7 +731,7 @@ export async function execute<Payload, Authorization, Result>(
   input: ExecuteInput<Payload>
 ): Promise<Outcome<Result>> {
   if (client.isTransaction) {
-    throw new TransactionOwnerException(
+    throw new E_TRANSACTION_OWNER(
       'execute owns its transaction; inside a host transaction use executeIn'
     )
   }
@@ -712,6 +745,15 @@ export async function execute<Payload, Authorization, Result>(
 /**
  * Deletes completed receipts last updated strictly before `olderThan`. After pruning, the same
  * identity runs as a fresh operation again, so keep receipts at least as long as clients may retry.
+ *
+ * @example
+ * ```ts
+ * import { pruneReceipts } from '@kevinjohn/adonisjs-duplicate-request-guard'
+ * import db from '@adonisjs/lucid/services/db'
+ *
+ * const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+ * await pruneReceipts(db.connection(), { olderThan: sevenDaysAgo })
+ * ```
  */
 export async function pruneReceipts(
   client: QueryClientContract,

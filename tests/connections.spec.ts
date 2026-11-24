@@ -39,7 +39,7 @@ test.group('only better-sqlite3 is supported', () => {
       const { operation, calls } = makeNoteOperation()
       await assert.rejects(
         () => execute(fake, operation, makeOperationInput(1)),
-        errors.UnsupportedDialectException
+        errors.E_UNSUPPORTED_DIALECT
       )
       await assert.rejects(
         () =>
@@ -48,7 +48,7 @@ test.group('only better-sqlite3 is supported', () => {
             operation,
             makeOperationInput(1)
           ),
-        errors.UnsupportedDialectException
+        errors.E_UNSUPPORTED_DIALECT
       )
       assert.equal(calls.access, 0)
     })
@@ -116,7 +116,7 @@ test.group('shared SQLite file detection', () => {
     try {
       await assert.rejects(
         () => execute(other.connection(), operation, makeOperationInput(2)),
-        errors.UnsafeSqlitePoolException
+        errors.E_UNSAFE_SQLITE_POOL
       )
     } finally {
       await other.manager.closeAll()
@@ -138,7 +138,7 @@ test.group('shared SQLite file detection', () => {
     try {
       await assert.rejects(
         () => execute(other.connection(), operation, makeOperationInput(2)),
-        errors.UnsafeSqlitePoolException
+        errors.E_UNSAFE_SQLITE_POOL
       )
     } finally {
       await other.manager.closeAll()
@@ -246,11 +246,11 @@ test.group('API surface', () => {
     })
     await assert.rejects(
       () => execute(db.connection('second'), operation, makeOperationInput(2)),
-      errors.UnsafeSqlitePoolException
+      errors.E_UNSAFE_SQLITE_POOL
     )
     await assert.rejects(
       () => pruneReceipts(db.connection('second'), { olderThan: new Date() }),
-      errors.UnsafeSqlitePoolException
+      errors.E_UNSAFE_SQLITE_POOL
     )
   })
 })

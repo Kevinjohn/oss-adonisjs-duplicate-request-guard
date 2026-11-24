@@ -209,7 +209,7 @@ test.group('identity, ordering and retention rules', () => {
           ...makeOperationInput(1, { payload: { body: 'other' } }),
           authorization: 'garbage',
         }),
-      errors.DuplicateRequestConflictException
+      errors.E_DUPLICATE_REQUEST_CONFLICT
     )
     assert.equal(calls.parse, 1)
   })
@@ -233,7 +233,12 @@ test.group('identity, ordering and retention rules', () => {
       ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
-    assert.instanceOf(reentry, errors.DuplicateRequestConflictException)
+    assert.instanceOf(reentry, errors.E_DUPLICATE_REQUEST_CONFLICT)
+    assert.deepInclude(reentry, {
+      code: 'E_DUPLICATE_REQUEST_CONFLICT',
+      status: 409,
+      message: 'Command identity already used',
+    })
   })
 
   test('the same identity under another actor or operation is a separate receipt', async ({
@@ -385,7 +390,7 @@ test.group('identity strings', () => {
           authorization: { proofToken: 'p1' },
         } as ReturnType<typeof makeOperationInput> & { authorization: unknown }
         const error = await execute(client, operation, request).catch((e) => e)
-        assert.instanceOf(error, errors.InvalidCommandValueException)
+        assert.instanceOf(error, errors.E_INVALID_COMMAND_VALUE)
         assert.equal(error.status, 400)
         assert.match(error.message, /well-formed/)
         assert.equal(calls.access, 0)

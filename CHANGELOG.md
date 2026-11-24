@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Throw guard exceptions through their existing `E_*` exports and use the classes' static
+  codes, statuses and fixed messages. Existing exception exports remain available.
+- Add TypeScript examples for `assertSupportedConnection`, `executeIn`, `execute` and
+  `pruneReceipts`.
+
 ## 0.2.3 - 2026-11-24
 
 - Clarify operation identity, nested execution in the same transaction and rollback when a work result fails validation.

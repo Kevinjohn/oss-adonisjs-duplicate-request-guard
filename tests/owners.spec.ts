@@ -28,7 +28,7 @@ test.group('transaction owners', () => {
     const { operation } = makeNoteOperation()
     await assert.rejects(
       () => executeIn(client as never, operation, makeOperationInput(1)),
-      errors.TransactionOwnerException
+      errors.E_TRANSACTION_OWNER
     )
   })
 
@@ -37,7 +37,7 @@ test.group('transaction owners', () => {
     const { operation, calls } = makeNoteOperation()
     await assert.rejects(
       () => client.transaction((trx) => execute(trx as never, operation, makeOperationInput(1))),
-      errors.TransactionOwnerException
+      errors.E_TRANSACTION_OWNER
     )
     assert.equal(calls.access, 0)
   })
@@ -76,7 +76,7 @@ test.group('transaction owners', () => {
         hooks.beforeWork = undefined
         await assert.rejects(
           () => executeIn(context.trx, operation, makeOperationInput(1)),
-          errors.DuplicateRequestInProgressException
+          errors.E_DUPLICATE_REQUEST_IN_PROGRESS
         )
       }
       await executeIn(trx, operation, {
@@ -106,7 +106,7 @@ test.group('completion', () => {
             serialized: '{"noteId":99}',
           })
         ),
-      errors.ReceiptNotPendingException
+      errors.E_RECEIPT_NOT_PENDING
     )
     const replay = await execute(client, operation, makeOperationInput(1))
     assert.deepEqual(replay.result, { noteId: 1 })
@@ -123,7 +123,7 @@ test.group('completion', () => {
             serialized: '{}',
           })
         ),
-      errors.ReceiptNotPendingException
+      errors.E_RECEIPT_NOT_PENDING
     )
   })
 })
