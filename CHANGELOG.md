@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.3.1 - 2026-11-25
+
+- Exercise transaction composition against the published Account Kit `0.8.0` archive.
+
 ## 0.3.0 - 2026-11-24
 
 - Exercise the transaction bridge with Account Kit 0.7.0.
