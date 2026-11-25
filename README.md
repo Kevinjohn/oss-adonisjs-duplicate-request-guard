@@ -12,7 +12,7 @@ retry runs fresh.
 ## Install
 
 ```sh
-pnpm add https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/releases/download/v0.3.0/kevinjohn-adonisjs-duplicate-request-guard-0.3.0.tgz
+pnpm add https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/releases/download/v0.3.1/kevinjohn-adonisjs-duplicate-request-guard-0.3.1.tgz
 node ace configure @kevinjohn/adonisjs-duplicate-request-guard   # publishes the receipts migration once
 node ace migration:run
 ```
