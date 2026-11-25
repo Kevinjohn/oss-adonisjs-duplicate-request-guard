@@ -77,8 +77,8 @@ return execute(db.connection(), createNote, {
 
 The first call inserts one row and returns its ID with `replayed: false`. A retry with the same
 identity, scope and payload returns that ID with `replayed: true`. The note is still stored once.
-The [API starter](https://github.com/Kevinjohn/oss-adonisjs-starter-examples/blob/v0.15.1/apps/api/app/controllers/notes_controller.ts)
-and its [functional test](https://github.com/Kevinjohn/oss-adonisjs-starter-examples/blob/v0.15.1/apps/api/tests/functional/notes.spec.ts)
+The [API starter](https://github.com/Kevinjohn/oss-adonisjs-starter-examples/blob/v0.17.0/apps/api/app/controllers/notes_controller.ts)
+and its [functional test](https://github.com/Kevinjohn/oss-adonisjs-starter-examples/blob/v0.17.0/apps/api/tests/functional/notes.spec.ts)
 show the full request and check the stored rows.
 
 `authorizeAccess` runs on both calls. For this minimal receipt it suffices because the note ID
