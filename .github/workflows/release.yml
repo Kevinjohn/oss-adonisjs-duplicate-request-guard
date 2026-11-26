@@ -7,19 +7,47 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  checks:
-    uses: ./.github/workflows/checks.yml
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Verify CI for the release commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main" || { echo "release runs on main only"; exit 1; }
+          if ! run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow checks.yml --branch main \
+            --commit "$GITHUB_SHA" --limit 1 --json databaseId,headSha,event |
+            jq -er --arg sha "$GITHUB_SHA" '
+              .[0] | select(.headSha == $sha and (.event == "push" or .event == "workflow_dispatch"))
+              | .databaseId | select(type == "number" and . > 0 and floor == .)
+            '); then
+            echo "::error::No checks.yml push or manual run found for $GITHUB_SHA on main."
+            exit 1
+          fi
+          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --interval 30 --exit-status
+          if ! gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?filter=latest&per_page=100" |
+            jq -e '
+              .jobs | map(select(.status == "completed" and .conclusion == "success") | .name)
+              | index("checks") != null
+            '; then
+            echo "::error::Required checks.yml jobs did not all complete successfully for $GITHUB_SHA."
+            exit 1
+          fi
   # Installing and building run dependency code, so they hold a read-only token.
   package:
-    needs: checks
+    needs: ci
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
       version: ${{ steps.check.outputs.version }}
       tarball: ${{ steps.check.outputs.tarball }}
     steps:
-      - name: Only main releases
-        run: test "$GITHUB_REF" = "refs/heads/main" || { echo "release runs on main only"; exit 1; }
       - uses: actions/checkout@v7
         with: { fetch-depth: 0, persist-credentials: false }
       - uses: pnpm/action-setup@v6
