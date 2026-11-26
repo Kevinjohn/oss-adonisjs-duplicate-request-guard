@@ -205,6 +205,12 @@ Use Node 24 or newer, AdonisJS Core ^7.0.0 and Lucid ^22.0.0. The configure hook
 Assembler ^8.6.0 as an optional peer. The clean consumer checks exercise this migration
 with the current and minimum Core and Lucid versions.
 
+## Releasing
+
+After the `checks.yml` push or manual run for the release commit on `main` succeeds, dispatch the
+`release` workflow on `main`. The package gate builds, packs and smoke-tests the candidate archive
+before GitHub publishes it as a prerelease. Run `pnpm release` to exercise the package gate locally.
+
 ## User stories
 
 The [user story catalogue](https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/blob/main/user-stories/README.md)

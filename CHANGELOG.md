@@ -24,6 +24,8 @@
   lock at the application root and reports the full path if a lock is already held.
   Finish any configure run using the old release before upgrading.
 - Assembler ^8.6.0 is declared as an optional peer for configure tooling.
+- Releases reuse the successful `checks.yml` push or manual run for the exact commit on `main` before
+  building and validating the release archive.
 
 ## 0.3.1 - 2026-11-25
 
