@@ -60,8 +60,8 @@ for (const name of names) {
   if (!(name in root)) fail(`root entry is missing export "${name}"`)
 }
 
-const { stubsRoot } = await import(pathToFileURL(join(packageDirectory, 'build/configure.js')).href)
-const stub = join(stubsRoot, 'migrations/create_request_receipts_table.stub')
+const { stubsRoot } = await import(pathToFileURL(join(packageDirectory, 'build/stubs/main.js')).href)
+const stub = join(stubsRoot, 'make/migration/create_request_receipts_table.stub')
 if (!existsSync(stub)) fail(`stub not packed: ${stub}`)
 console.log(`smoke: ok (${entries.length} exports, stub present)`)
 JS

@@ -52,17 +52,6 @@ export class InvalidCommandResultException extends Exception {
   }
 }
 
-/** The connection's database is not one this package supports (better-sqlite3 only). */
-export class UnsupportedDialectException extends Exception {
-  static code = 'E_UNSUPPORTED_DIALECT'
-  static status = 500
-  constructor(connectionName: string, dialect: string) {
-    super(
-      `Connection "${connectionName}" uses ${dialect}; guarded commands support better-sqlite3 only`
-    )
-  }
-}
-
 /**
  * Another operation is open on the transaction and the caller is not inside it: a sibling (for
  * example `Promise.all` on one trx), a call that lost its async context, or a call from an
@@ -114,15 +103,6 @@ export class ReceiptNotPendingException extends Exception {
   }
 }
 
-/** The caller used the wrong transaction owner: executeIn needs a transaction, execute must not get one. */
-export class TransactionOwnerException extends Exception {
-  static code = 'E_TRANSACTION_OWNER'
-  static status = 500
-  constructor(message: string) {
-    super(message)
-  }
-}
-
 /**
  * SQLite ended the host transaction underneath its Lucid client (`INSERT OR ROLLBACK`, a busy
  * abort), in an earlier operation or a host query. Statements on that client would now autocommit,
@@ -139,18 +119,6 @@ export class TransactionLostException extends Exception {
   }
 }
 
-/**
- * More than one in-process connection could write the SQLite file (a pool above one, or a second
- * named connection on the same file); better-sqlite3 would stall the event loop on its lock.
- */
-export class UnsafeSqlitePoolException extends Exception {
-  static code = 'E_UNSAFE_SQLITE_POOL'
-  static status = 500
-  constructor(message: string) {
-    super(message)
-  }
-}
-
 /** Alias of the same exception constructor; codes, status and messages remain stable. */
 export const E_DUPLICATE_REQUEST_CONFLICT = DuplicateRequestConflictException
 /** Alias for the HTTP 409 exception when the operation already has a pending receipt. */
@@ -159,8 +127,6 @@ export const E_DUPLICATE_REQUEST_IN_PROGRESS = DuplicateRequestInProgressExcepti
 export const E_INVALID_COMMAND_VALUE = InvalidCommandValueException
 /** Alias for the HTTP 500 exception for invalid operation result. */
 export const E_INVALID_COMMAND_RESULT = InvalidCommandResultException
-/** Alias for the unsupported database dialect exception. */
-export const E_UNSUPPORTED_DIALECT = UnsupportedDialectException
 /** Alias for the receipt completion exception. */
 export const E_RECEIPT_NOT_PENDING = ReceiptNotPendingException
 /** Alias for the incompatible receipt schema exception. */
@@ -171,7 +137,3 @@ export const E_CONCURRENT_COMMAND = ConcurrentCommandException
 export const E_UNAWAITED_NESTED_COMMAND = UnawaitedNestedCommandException
 /** Alias for the lost transaction exception. */
 export const E_TRANSACTION_LOST = TransactionLostException
-/** Alias for the incorrect transaction owner exception. */
-export const E_TRANSACTION_OWNER = TransactionOwnerException
-/** Alias for the unsafe SQLite pool exception. */
-export const E_UNSAFE_SQLITE_POOL = UnsafeSqlitePoolException

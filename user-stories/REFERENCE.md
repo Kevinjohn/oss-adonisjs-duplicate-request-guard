@@ -12,7 +12,7 @@
 - Public exports and error symbols: [`index.ts`](../index.ts).
 - Operation/context/identity/result types: [`src/types.ts`](../src/types.ts).
 - Reservation, execution, replay, transaction checks and pruning: [`src/receipts.ts`](../src/receipts.ts).
-- Migration setup: [`configure.ts`](../configure.ts), [`stubs/migrations/create_request_receipts_table.stub`](../stubs/migrations/create_request_receipts_table.stub).
+- Migration setup: [`configure.ts`](../configure.ts), [`stubs/make/migration/create_request_receipts_table.stub`](../stubs/make/migration/create_request_receipts_table.stub).
 - Detailed contracts and host integration examples: [README](../README.md). There is no user-facing guide or built-in route.
 - Test evidence: [`tests/execute.spec.ts`](../tests/execute.spec.ts), [`tests/rollback.spec.ts`](../tests/rollback.spec.ts), [`tests/nesting.spec.ts`](../tests/nesting.spec.ts), [`tests/connections.spec.ts`](../tests/connections.spec.ts), [`tests/prune.spec.ts`](../tests/prune.spec.ts).
 

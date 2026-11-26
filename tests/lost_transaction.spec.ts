@@ -1,6 +1,6 @@
 import { test } from '@japa/runner'
 import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
-import { assertSupportedConnection, execute, executeIn } from '../index.js'
+import { assertSupportedConnection, execute, executeIn } from '../index.ts'
 import {
   addProof,
   makeAuthorizedOperationInput,
@@ -9,7 +9,7 @@ import {
   makeNamedOperation,
   makeNoteOperation,
   listReceipts,
-} from './helpers.js'
+} from './helpers.ts'
 
 /** A statement that makes SQLite roll back the whole transaction, not just the statement. */
 const endTransaction = (trx: TransactionClientContract) =>

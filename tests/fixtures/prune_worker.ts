@@ -3,7 +3,7 @@ import { AppFactory } from '@adonisjs/core/factories/app'
 import { LoggerFactory } from '@adonisjs/core/factories/logger'
 import { Emitter } from '@adonisjs/core/events'
 import { Database } from '@adonisjs/lucid/database'
-import { pruneReceipts } from '../../index.js'
+import { pruneReceipts } from '../../index.ts'
 
 /** Another process stand-in: its own connection pruning in a loop until told to stop. */
 const { file, stop, flight } = workerData as {

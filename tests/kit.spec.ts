@@ -1,12 +1,13 @@
+import { InvalidArgumentsException } from '@adonisjs/core/exceptions'
 import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from '@japa/runner'
 import BetterSqlite3 from 'better-sqlite3'
-import { makeNoteOperation } from './helpers.js'
-import { bootKit, fixtureGuard, type KitFixture } from './kit_fixture.js'
+import { makeNoteOperation } from './helpers.ts'
+import { bootKit, fixtureGuard, type KitFixture } from './kit_fixture.ts'
 
-const { executeIn, execute, RECEIPTS_TABLE, errors } = fixtureGuard
+const { executeIn, execute, RECEIPTS_TABLE } = fixtureGuard
 
 const makeBusyError = () => Object.assign(new Error('simulated busy'), { code: 'SQLITE_BUSY' })
 
@@ -28,13 +29,16 @@ test.group('executeIn inside Account Kit 0.8.0 authentication.withCurrent', (gro
       actorId: credential.userId,
       scopeId: 's1',
       payload: { body: `kit ${sequenceNumber}` },
-      command: { commandId: `kit-c${sequenceNumber}`, requestKey: `kit-k${sequenceNumber}` },
+      requestIdentity: {
+        commandId: `kit-c${sequenceNumber}`,
+        requestKey: `kit-k${sequenceNumber}`,
+      },
       authorization: { proofToken: token },
     }
     const readKitAndReceiptState = async () => ({
       receipts: await fixture.db
         .from(RECEIPTS_TABLE)
-        .where('command_id', command.command.commandId),
+        .where('command_id', command.requestIdentity.commandId),
       notes: await fixture.db.from('notes').where('body', command.payload.body),
       pending: await fixture.db.from(RECEIPTS_TABLE).where('state', 'pending'),
       proof: await fixture.db.from('proofs').where('token', token).first(),
@@ -53,7 +57,7 @@ test.group('executeIn inside Account Kit 0.8.0 authentication.withCurrent', (gro
     try {
       const receipt = reader
         .prepare(`select state from ${RECEIPTS_TABLE} where command_id = ?`)
-        .get(command.command.commandId) as { state: string } | undefined
+        .get(command.requestIdentity.commandId) as { state: string } | undefined
       assert.equal(receipt?.state, 'completed')
       const notes = reader
         .prepare('select count(*) as n from notes where body = ?')
@@ -231,7 +235,7 @@ test.group('executeIn inside Account Kit 0.8.0 authentication.withCurrent', (gro
         fixture.kit.authentication.withCurrent(credential, ({ trx }) =>
           execute(trx as never, operation, command)
         ),
-      errors.E_TRANSACTION_OWNER
+      InvalidArgumentsException
     )
   })
 })

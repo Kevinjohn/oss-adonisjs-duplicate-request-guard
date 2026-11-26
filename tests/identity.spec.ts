@@ -6,7 +6,7 @@ import {
   RECEIPTS_TABLE,
   type ExecuteInput,
   type Operation,
-} from '../index.js'
+} from '../index.ts'
 import {
   addProof,
   createDatabase,
@@ -14,7 +14,7 @@ import {
   makeOperationInput,
   makeNoteOperation,
   listReceipts,
-} from './helpers.js'
+} from './helpers.ts'
 
 test.group('identity, ordering and retention rules', () => {
   for (const owner of ['managed', 'host'] as const) {
@@ -34,7 +34,7 @@ test.group('identity, ordering and retention rules', () => {
         actorId: original.actorId,
         scopeId: original.scopeId,
         payload: original.payload,
-        command: { ...original.command },
+        requestIdentity: { ...original.requestIdentity },
         get authorization() {
           return original.authorization
         },
@@ -57,8 +57,8 @@ test.group('identity, ordering and retention rules', () => {
       const mutate = () => {
         input.actorId = 'bob'
         input.scopeId = 's2'
-        input.command.commandId = 'c2'
-        input.command.requestKey = 'k2'
+        input.requestIdentity.commandId = 'c2'
+        input.requestIdentity.requestKey = 'k2'
       }
 
       const mutateAfterDispatch = <Result>(pending: Promise<Result>) => {
@@ -78,8 +78,8 @@ test.group('identity, ordering and retention rules', () => {
       assert.include(receipts[0], {
         operation: JSON.stringify([operation.name, original.actorId]),
         scope_id: original.scopeId,
-        command_id: original.command.commandId,
-        request_key: original.command.requestKey,
+        command_id: original.requestIdentity.commandId,
+        request_key: original.requestIdentity.requestKey,
         state: 'completed',
       })
       const replay =
@@ -117,19 +117,19 @@ test.group('identity, ordering and retention rules', () => {
     })
   })
 
-  test('getter-backed input and command work for fresh execution and replay', async ({
+  test('getter-backed input and requestIdentity work for fresh execution and replay', async ({
     assert,
   }) => {
     const { client } = await createDatabase()
     const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
-    const command = makeOperationInput(1).command
+    const requestIdentity = makeOperationInput(1).requestIdentity
     class Command {
       get commandId() {
-        return command.commandId
+        return requestIdentity.commandId
       }
       get requestKey() {
-        return command.requestKey
+        return requestIdentity.requestKey
       }
     }
 
@@ -145,7 +145,7 @@ test.group('identity, ordering and retention rules', () => {
       get payload() {
         return source.payload
       }
-      get command() {
+      get requestIdentity() {
         return new Command()
       }
     }
@@ -386,7 +386,7 @@ test.group('identity strings', () => {
         await addProof(client, 'p1')
         const request = {
           ...makeOperationInput(1),
-          command: { ...makeOperationInput(1).command, [field]: value },
+          requestIdentity: { ...makeOperationInput(1).requestIdentity, [field]: value },
           authorization: { proofToken: 'p1' },
         } as ReturnType<typeof makeOperationInput> & { authorization: unknown }
         const error = await execute(client, operation, request).catch((e) => e)
@@ -413,7 +413,7 @@ test.group('identity strings', () => {
       actorId: 'a\uD800',
       scopeId: 's\uDFFF',
       payload: { body: 'p\uD801', ['k\uDC01']: 1 },
-      command: { commandId: 'c1', requestKey: 'k1' },
+      requestIdentity: { commandId: 'c1', requestKey: 'k1' },
     }
     const fresh = await execute(client, operation, request)
     const replay = await execute(client, operation, request)

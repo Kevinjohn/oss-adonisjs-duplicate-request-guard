@@ -5,7 +5,7 @@ As an operation caller, I want request deduplication to check current access bef
 **Status:** Current.
 **Access:** `authorizeAccess` runs for fresh and replay calls after initial payload validation; optional `authorizeReplay` runs on completed matching replay. Omission permits replay after access authorisation callback passes.
 **Entry:** Call `execute` or `executeIn` using the original operation namespace and identity.
-**Documentation:** [README operation authorisation callback order](../README.md#use)
+**Documentation:** [README operation authorisation callback order](../README.md#usage)
 **Source:** [`reserveAndRun`](../src/receipts.ts)
 **Coverage:** [`tests/optional_authorization_callbacks.spec.ts`](../tests/optional_authorization_callbacks.spec.ts), [`tests/identity.spec.ts`](../tests/identity.spec.ts)
 
@@ -66,4 +66,4 @@ flowchart TD
     T -->|Success on executeIn| P["Return provisional outcome to host transaction owner"]
 ```
 
-**Code references:** [fresh operation flow](US-GUARD-01-execute-command.md#code-flow), [authorisation callback order](../README.md#use), [replay branch](../src/receipts.ts#L662), [namespace construction](../src/receipts.ts#L557), [refusal rollback](../src/receipts.ts#L582)
+**Code references:** [fresh operation flow](US-GUARD-01-execute-command.md#code-flow), [authorisation callback order](../README.md#usage), [replay branch](../src/receipts.ts#L662), [namespace construction](../src/receipts.ts#L557), [refusal rollback](../src/receipts.ts#L582)

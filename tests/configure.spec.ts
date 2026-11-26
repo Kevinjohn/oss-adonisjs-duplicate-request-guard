@@ -11,118 +11,118 @@ import { Emitter } from '@adonisjs/core/events'
 import { Database } from '@adonisjs/lucid/database'
 import { MigrationRunner } from '@adonisjs/lucid/migration'
 import { sourceFiles } from '@adonisjs/lucid/utils'
-import { configure } from '../configure.js'
-import { execute } from '../index.js'
-import { makeOperationInput, makeSignal } from './helpers.js'
+import { configure } from '../configure.ts'
+import { execute } from '../index.ts'
+import { makeOperationInput, makeSignal } from './helpers.ts'
 
-const PACKAGE = '@kevinjohn/adonisjs-duplicate-request-guard'
+const PACKAGE = '@kevinjohn/adonisjs-request-deduplication'
 
-test('configure publishes the receipts migration once, and it works', async ({ assert }) => {
-  const root = await mkdtemp(join(tmpdir(), 'adonisjs-duplicate-request-guard-configure-'))
-  try {
-    await writeFile(join(root, 'package.json'), '{"type":"module"}')
-    await writeFile(join(root, 'tsconfig.json'), '{}')
-    await writeFile(
-      join(root, 'adonisrc.ts'),
-      `import { defineConfig } from '@adonisjs/core/app'\nexport default defineConfig({})\n`
-    )
-    await symlink(
-      fileURLToPath(new URL('../node_modules', import.meta.url)),
-      join(root, 'node_modules')
-    )
-    const importer = (specifier: string) =>
-      specifier === PACKAGE
-        ? import(new URL('../index.ts', import.meta.url).href)
-        : import(specifier)
-    const ignitor = new IgnitorFactory()
-      .withCoreProviders()
-      .withCoreConfig()
-      .merge({
-        rcFileContents: { providers: [], commands: [async () => new ListLoader([Configure])] },
-      })
-      .create(pathToFileURL(`${root}/`), { importer })
+test('configure publishes the receipts migration once, and it works', async ({ assert, fs }) => {
+  const root = fs.basePath
+  await fs.create('package.json', '{"type":"module"}')
+  await fs.create('tsconfig.json', '{}')
+  await fs.create(
+    'adonisrc.ts',
+    `import { defineConfig } from '@adonisjs/core/app'\nexport default defineConfig({})\n`
+  )
+  await symlink(
+    fileURLToPath(new URL('../node_modules', import.meta.url)),
+    join(root, 'node_modules')
+  )
+  const importer = (specifier: string) =>
+    specifier === PACKAGE ? import(new URL('../index.ts', import.meta.url).href) : import(specifier)
+  const ignitor = new IgnitorFactory()
+    .withCoreProviders()
+    .withCoreConfig()
+    .merge({
+      rcFileContents: {
+        directories: { migrations: 'custom/migrations' },
+        providers: [],
+        commands: [async () => new ListLoader([Configure])],
+      },
+    })
+    .create(pathToFileURL(`${root}/`), { importer })
 
-    // First run on a fresh app: no migrations directory exists yet.
-    const migrationsDir = join(root, 'database/migrations')
-    await ignitor.ace().handle(['configure', PACKAGE])
-    const files = await readdir(migrationsDir)
-    assert.lengthOf(files, 1)
-    assert.match(files[0], /^\d+_create_request_receipts_table\.ts$/)
-    const published = await readFile(join(migrationsDir, files[0]), 'utf8')
+  // First run on a fresh app: no migrations directory exists yet.
+  const relativeMigrations = 'custom/migrations'
+  const migrationsDir = join(root, relativeMigrations)
+  await ignitor.ace().handle(['configure', PACKAGE])
+  const files = await readdir(migrationsDir)
+  assert.lengthOf(files, 1)
+  assert.match(files[0], /^\d+_create_request_receipts_table\.ts$/)
+  const publishedPath = join(relativeMigrations, files[0])
+  await assert.fileContains(publishedPath, "protected tableName = 'request_receipts'")
+  const published = await fs.contents(publishedPath)
 
-    // A rerun keeps the first file and its contents.
-    await ignitor.ace().handle(['configure', PACKAGE])
-    assert.deepEqual(await readdir(migrationsDir), files)
-    assert.equal(await readFile(join(migrationsDir, files[0]), 'utf8'), published)
+  // A rerun keeps the first file and its contents.
+  await ignitor.ace().handle(['configure', PACKAGE])
+  assert.deepEqual(await readdir(migrationsDir), files)
+  await assert.fileEquals(publishedPath, published)
 
-    const relativeMigrations = './database/migrations'
-    const discover = () => sourceFiles(pathToFileURL(`${root}/`), relativeMigrations, false)
-    const initial = await discover()
-    assert.lengthOf(initial.files, 1)
-    const nestedDir = join(migrationsDir, 'prior')
-    await mkdir(nestedDir)
-    const nestedMigration = join(nestedDir, files[0])
-    await rename(join(migrationsDir, files[0]), nestedMigration)
-    await ignitor.ace().handle(['configure', PACKAGE])
-    const { files: discovered } = await discover()
-    assert.deepEqual(
-      discovered.map(({ absPath }) => absPath),
-      [nestedMigration]
-    )
+  const discover = () => sourceFiles(pathToFileURL(`${root}/`), relativeMigrations, false)
+  const initial = await discover()
+  assert.lengthOf(initial.files, 1)
+  const nestedDir = join(migrationsDir, 'prior')
+  await mkdir(nestedDir)
+  const nestedMigration = join(nestedDir, files[0])
+  await rename(join(migrationsDir, files[0]), nestedMigration)
+  await ignitor.ace().handle(['configure', PACKAGE])
+  const { files: discovered } = await discover()
+  assert.deepEqual(
+    discovered.map(({ absPath }) => absPath),
+    [nestedMigration]
+  )
 
-    // Before any database has applied the migration, also exercise a compiled JavaScript identity.
-    const javascriptMigration = nestedMigration.replace(/\.ts$/, '.js')
-    await writeFile(javascriptMigration, published.replace('protected tableName', 'tableName'))
-    await rm(nestedMigration)
+  // Before any database has applied the migration, also exercise a compiled JavaScript identity.
+  const javascriptMigration = nestedMigration.replace(/\.ts$/, '.js')
+  await writeFile(javascriptMigration, published.replace('protected tableName', 'tableName'))
+  await rm(nestedMigration)
 
-    const app = ignitor.createApp('console')
-    await app.init()
-    const db = new Database(
-      {
-        connection: 'sqlite',
-        connections: {
-          sqlite: {
-            client: 'better-sqlite3',
-            connection: { filename: join(root, 'db.sqlite3') },
-            useNullAsDefault: true,
-          },
+  const app = ignitor.createApp('console')
+  await app.init()
+  const db = new Database(
+    {
+      connection: 'sqlite',
+      connections: {
+        sqlite: {
+          client: 'better-sqlite3',
+          connection: { filename: join(root, 'db.sqlite3') },
+          useNullAsDefault: true,
         },
       },
-      new LoggerFactory().create(),
-      new Emitter(app)
-    )
-    try {
-      const runner = new MigrationRunner(db, app, { direction: 'up' })
-      const before = await runner.getList()
-      assert.deepEqual(before, [
-        {
-          name: `database/migrations/prior/${files[0].slice(0, -3)}`,
-          status: 'pending',
-        },
-      ])
-      await ignitor.ace().handle(['configure', PACKAGE])
-      assert.deepEqual(await runner.getList(), before)
-      await runner.run()
-      assert.isNull(runner.error)
-      assert.lengthOf(Object.keys(runner.migratedFiles), 1)
+    },
+    new LoggerFactory().create(),
+    new Emitter(app)
+  )
+  try {
+    const runner = new MigrationRunner(db, app, { direction: 'up' })
+    const before = await runner.getList()
+    assert.deepEqual(before, [
+      {
+        name: `custom/migrations/prior/${files[0].slice(0, -3)}`,
+        status: 'pending',
+      },
+    ])
+    await ignitor.ace().handle(['configure', PACKAGE])
+    assert.deepEqual(await runner.getList(), before)
+    await runner.run()
+    assert.isNull(runner.error)
+    assert.lengthOf(Object.keys(runner.migratedFiles), 1)
 
-      const operation = {
-        name: 'setup.check',
-        authorizeAccess() {},
-        work: () => ({ created: true }),
-      }
-      const input = makeOperationInput(1)
-      const client = db.connection()
-      await execute(client, operation, input)
-      assert.deepEqual(await execute(client, operation, input), {
-        replayed: true,
-        result: { created: true },
-      })
-    } finally {
-      await db.manager.closeAll()
+    const operation = {
+      name: 'setup.check',
+      authorizeAccess() {},
+      work: () => ({ created: true }),
     }
+    const input = makeOperationInput(1)
+    const client = db.connection()
+    await execute(client, operation, input)
+    assert.deepEqual(await execute(client, operation, input), {
+      replayed: true,
+      result: { created: true },
+    })
   } finally {
-    await rm(root, { recursive: true, force: true })
+    await db.manager.closeAll()
   }
 }).timeout(20_000)
 
@@ -131,6 +131,8 @@ test('simultaneous configure publication is exclusive and a later run preserves 
 }) => {
   const root = await mkdtemp(join(tmpdir(), 'adonisjs-duplicate-request-guard-claim-'))
   const migrationsPath = join(root, 'migrations')
+  const alias = join(root, 'alias')
+  await symlink(root, alias)
   const publishing = makeSignal()
   const proceed = makeSignal()
   const command = {
@@ -140,23 +142,26 @@ test('simultaneous configure publication is exclusive and a later run preserves 
       makeUsingStub: async (
         _root: string,
         _stub: string,
-        data: { migration: { destination: string } }
+        data: { migration: { filename: string } }
       ) => {
         publishing.fire()
         await proceed.fired
-        await writeFile(data.migration.destination, 'published migration')
+        await mkdir(migrationsPath, { recursive: true })
+        await writeFile(join(migrationsPath, data.migration.filename), 'published migration')
       },
     }),
   } as unknown as Configure
   const first = configure(command)
   try {
     await publishing.fired
-    const lockPath = join(migrationsPath, '.request-receipts-configure.lock')
+    await assert.rejects(() => readdir(migrationsPath), /ENOENT/)
+    const aliasedCommand = {
+      ...command,
+      app: { migrationsPath: () => join(alias, 'migrations') },
+    } as unknown as Configure
     await assert.rejects(
-      () => configure(command),
-      new RegExp(
-        `^request receipts migration publication is already claimed; .* Lock directory: ${lockPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`
-      )
+      () => configure(aliasedCommand),
+      /^request receipts migration publication is already claimed; .*Lock directory: .*request-receipts-configure-[a-f0-9]{64}\.lock$/
     )
     proceed.fire()
     await first
@@ -183,10 +188,10 @@ test('a failed publication releases the claim for a later configure', async ({ a
         makeUsingStub: async (
           _root: string,
           _stub: string,
-          data: { migration: { destination: string } }
+          data: { migration: { filename: string } }
         ) => {
           if (failPublication) throw new Error('publication failed')
-          await writeFile(data.migration.destination, 'migration')
+          await writeFile(join(root, data.migration.filename), 'migration')
         },
       }),
     } as unknown as Configure

@@ -1,7 +1,7 @@
 import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
 
 /** The paired identity a client sends with one operation; preserve both values on retries. */
-export interface CommandIdentity {
+export interface RequestIdentity {
   commandId: string
   requestKey: string
 }
@@ -61,7 +61,7 @@ export interface ExecuteInput<Payload> {
   /** Validated JSON operation payload; must remain unchanged until the call settles. */
   payload: Payload
   /** Client-supplied paired identity. Stored field and member names are retained for compatibility. */
-  command: CommandIdentity
+  requestIdentity: RequestIdentity
   /** Opaque. Passed to `parseAuthorization` only when this request wins a fresh reservation. */
   authorization?: unknown
 }

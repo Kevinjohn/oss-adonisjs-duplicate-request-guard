@@ -1,3 +1,4 @@
+import { RuntimeException } from '@adonisjs/core/exceptions'
 import { test } from '@japa/runner'
 import { realpathSync } from 'node:fs'
 import { mkdir, symlink } from 'node:fs/promises'
@@ -6,17 +7,16 @@ import { AppFactory } from '@adonisjs/core/factories/app'
 import { LoggerFactory } from '@adonisjs/core/factories/logger'
 import { Emitter } from '@adonisjs/core/events'
 import { Database } from '@adonisjs/lucid/database'
-import * as api from '../index.js'
-import { assertSupportedConnection, execute, executeIn, pruneReceipts } from '../index.js'
-import { writersByDatabasePath } from '../src/receipts.js'
+import * as api from '../index.ts'
+import { assertSupportedConnection, execute, executeIn, pruneReceipts } from '../index.ts'
+import { writersByDatabasePath } from '../src/receipts.ts'
 import {
   addProof,
   createDatabase,
-  errors,
   makeOperationInput,
   makeNoteOperation,
   prepareSchema,
-} from './helpers.js'
+} from './helpers.ts'
 
 function openTestDatabase(filename: string) {
   const app = new AppFactory().create(new URL('file:///tmp/'), () => {})
@@ -34,13 +34,10 @@ function openTestDatabase(filename: string) {
 
 test.group('only better-sqlite3 is supported', () => {
   for (const name of ['postgres', 'mysql', 'mssql', 'sqlite3', 'libsql']) {
-    test(`a ${name} connection is refused with E_UNSUPPORTED_DIALECT`, async ({ assert }) => {
+    test(`a ${name} connection is refused as unsupported configuration`, async ({ assert }) => {
       const fake = { dialect: { name }, connectionName: name, isTransaction: false } as never
       const { operation, calls } = makeNoteOperation()
-      await assert.rejects(
-        () => execute(fake, operation, makeOperationInput(1)),
-        errors.E_UNSUPPORTED_DIALECT
-      )
+      await assert.rejects(() => execute(fake, operation, makeOperationInput(1)), RuntimeException)
       await assert.rejects(
         () =>
           executeIn(
@@ -48,7 +45,7 @@ test.group('only better-sqlite3 is supported', () => {
             operation,
             makeOperationInput(1)
           ),
-        errors.E_UNSUPPORTED_DIALECT
+        RuntimeException
       )
       assert.equal(calls.access, 0)
     })
@@ -116,7 +113,7 @@ test.group('shared SQLite file detection', () => {
     try {
       await assert.rejects(
         () => execute(other.connection(), operation, makeOperationInput(2)),
-        errors.E_UNSAFE_SQLITE_POOL
+        RuntimeException
       )
     } finally {
       await other.manager.closeAll()
@@ -138,7 +135,7 @@ test.group('shared SQLite file detection', () => {
     try {
       await assert.rejects(
         () => execute(other.connection(), operation, makeOperationInput(2)),
-        errors.E_UNSAFE_SQLITE_POOL
+        RuntimeException
       )
     } finally {
       await other.manager.closeAll()
@@ -246,11 +243,11 @@ test.group('API surface', () => {
     })
     await assert.rejects(
       () => execute(db.connection('second'), operation, makeOperationInput(2)),
-      errors.E_UNSAFE_SQLITE_POOL
+      RuntimeException
     )
     await assert.rejects(
       () => pruneReceipts(db.connection('second'), { olderThan: new Date() }),
-      errors.E_UNSAFE_SQLITE_POOL
+      RuntimeException
     )
   })
 })

@@ -11,7 +11,7 @@ import {
   planChangedChecks,
   type ChangedFile,
   type PlannedCheckStep,
-} from '../../bin/check_changed_plan.js'
+} from '../../bin/check_changed_plan.ts'
 
 test('bounded output retains split test markers independently of the diagnostic tail', ({
   assert,

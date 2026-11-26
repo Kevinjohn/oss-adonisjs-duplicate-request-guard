@@ -1,7 +1,8 @@
+import { InvalidArgumentsException } from '@adonisjs/core/exceptions'
 import { test } from '@japa/runner'
 import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
-import { execute, executeIn } from '../index.js'
-import { completeReceipt } from '../src/receipts.js'
+import { execute, executeIn } from '../index.ts'
+import { completeReceipt } from '../src/receipts.ts'
 import {
   addProof,
   countRows,
@@ -10,7 +11,7 @@ import {
   makeOperationInput,
   makeNoteOperation,
   listReceipts,
-} from './helpers.js'
+} from './helpers.ts'
 
 test.group('transaction owners', () => {
   test('executeIn runs inside a host-owned transaction', async ({ assert }) => {
@@ -28,7 +29,7 @@ test.group('transaction owners', () => {
     const { operation } = makeNoteOperation()
     await assert.rejects(
       () => executeIn(client as never, operation, makeOperationInput(1)),
-      errors.E_TRANSACTION_OWNER
+      InvalidArgumentsException
     )
   })
 
@@ -37,7 +38,7 @@ test.group('transaction owners', () => {
     const { operation, calls } = makeNoteOperation()
     await assert.rejects(
       () => client.transaction((trx) => execute(trx as never, operation, makeOperationInput(1))),
-      errors.E_TRANSACTION_OWNER
+      InvalidArgumentsException
     )
     assert.equal(calls.access, 0)
   })

@@ -12,11 +12,11 @@ import { createSqlUsersAdapter } from '@kevinjohn/adonisjs-account-kit/adapters/
 import { defineConfig as defineLimiterConfig, stores } from '@adonisjs/limiter'
 
 const packageRoot = new URL('../', import.meta.url)
-const self = '@kevinjohn/adonisjs-duplicate-request-guard'
+const self = '@kevinjohn/adonisjs-request-deduplication'
 const guardEntry = process.env.TEST_BUILT_GUARD === '1' ? 'build/index.js' : 'index.ts'
 export const fixtureGuard = (await import(
   new URL(guardEntry, packageRoot).href
-)) as typeof import('../index.js')
+)) as typeof import('../index.ts')
 const importer = (specifier: string) =>
   specifier === self ? Promise.resolve(fixtureGuard) : import(specifier)
 

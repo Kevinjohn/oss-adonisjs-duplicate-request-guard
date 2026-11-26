@@ -28,7 +28,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Release checks (tag, changelog, build, pack)
         id: check
-        run: bash bin/release_check.sh
+        run: pnpm release
       - uses: actions/upload-artifact@v7
         with:
           name: release

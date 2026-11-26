@@ -1,8 +1,8 @@
 import { test } from '@japa/runner'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { E_UNAWAITED_NESTED_COMMAND, executeIn } from '../index.js'
-import { internalHooks } from '../src/receipts.js'
+import { E_UNAWAITED_NESTED_COMMAND, executeIn } from '../index.ts'
+import { internalHooks } from '../src/receipts.ts'
 import {
   addProof,
   makeAuthorizedOperationInput,
@@ -18,7 +18,7 @@ import {
   makeSignal,
   sleep,
   awaitWithDeadline,
-} from './helpers.js'
+} from './helpers.ts'
 
 test.group('operations compose on the outer transaction', () => {
   test('executeIn on the outer trx from inside work runs a nested operation', async ({

@@ -1,6 +1,6 @@
 import { test } from '@japa/runner'
-import { executeIn } from '../index.js'
-import { internalHooks } from '../src/receipts.js'
+import { executeIn } from '../index.ts'
+import { internalHooks } from '../src/receipts.ts'
 import {
   addProof,
   countRows,
@@ -8,7 +8,7 @@ import {
   makeOperationInput as makeBaseCommandInput,
   makeNoteOperation,
   listReceipts,
-} from './helpers.js'
+} from './helpers.ts'
 
 test('a child aborted during reservation never parses authorization and retries fresh', async ({
   assert,

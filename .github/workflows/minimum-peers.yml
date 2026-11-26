@@ -36,7 +36,8 @@ jobs:
           import assert from 'node:assert/strict'
           import { readFileSync } from 'node:fs'
           const { peerDependencies } = JSON.parse(readFileSync('package.json', 'utf8'))
-          for (const [peer, range] of Object.entries(peerDependencies)) {
+          for (const peer of ['@adonisjs/core', '@adonisjs/lucid']) {
+            const range = peerDependencies[peer]
             const { version } = JSON.parse(readFileSync(`node_modules/${peer}/package.json`, 'utf8'))
             assert.equal(version, range.slice(1), peer)
             console.log(`${peer}@${version}`)

@@ -1,5 +1,5 @@
 import { test } from '@japa/runner'
-import { execute, RECEIPTS_TABLE } from '../index.js'
+import { execute, RECEIPTS_TABLE } from '../index.ts'
 import {
   addProof,
   createDatabase,
@@ -7,7 +7,7 @@ import {
   makeOperationInput,
   makeNoteOperation,
   listReceipts,
-} from './helpers.js'
+} from './helpers.ts'
 
 class Point {
   constructor(

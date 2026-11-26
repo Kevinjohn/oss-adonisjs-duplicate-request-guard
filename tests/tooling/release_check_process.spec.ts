@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from '@japa/runner'
-import { collectExit, captureChildOutput } from './child_process.js'
+import { collectExit, captureChildOutput } from './child_process.ts'
 
 const releaseScript = new URL('../../bin/release_check.sh', import.meta.url)
 const digest = 'a'.repeat(64)

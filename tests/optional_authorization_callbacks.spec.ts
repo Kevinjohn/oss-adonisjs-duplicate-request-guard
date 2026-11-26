@@ -1,6 +1,6 @@
 import { test } from '@japa/runner'
-import { execute, type Operation } from '../index.js'
-import { countRows, createDatabase, makeOperationInput, listReceipts } from './helpers.js'
+import { execute, type Operation } from '../index.ts'
+import { countRows, createDatabase, makeOperationInput, listReceipts } from './helpers.ts'
 
 test.group('execute: optional authorisation callbacks', () => {
   for (const replay of [false, true]) {

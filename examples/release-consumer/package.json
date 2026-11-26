@@ -8,7 +8,7 @@
   "dependencies": {
     "@adonisjs/core": "7.6.0",
     "@adonisjs/lucid": "22.4.2",
-    "@kevinjohn/adonisjs-duplicate-request-guard": "file:./candidate.tgz",
+    "@kevinjohn/adonisjs-request-deduplication": "file:./candidate.tgz",
     "old-duplicate-request-guard": "https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/releases/download/v0.1.3/kevinjohn-adonisjs-duplicate-request-guard-0.1.3.tgz",
     "better-sqlite3": "13.0.3",
     "luxon": "^3.0.0"

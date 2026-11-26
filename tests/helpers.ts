@@ -9,7 +9,7 @@ import { Emitter } from '@adonisjs/core/events'
 import { Database } from '@adonisjs/lucid/database'
 import type { QueryClientContract } from '@adonisjs/lucid/types/database'
 import type { BaseSchema } from '@adonisjs/lucid/schema'
-import { RECEIPTS_TABLE, errors, type Operation, type OperationContext } from '../index.js'
+import { RECEIPTS_TABLE, errors, type Operation, type OperationContext } from '../index.ts'
 
 const packageRoot = new URL('../', import.meta.url)
 
@@ -18,7 +18,7 @@ export async function loadMigration(stubBody?: string): Promise<typeof BaseSchem
   const body =
     stubBody ??
     (await readFile(
-      new URL('stubs/migrations/create_request_receipts_table.stub', packageRoot),
+      new URL('stubs/make/migration/create_request_receipts_table.stub', packageRoot),
       'utf8'
     ))
   const source = body.replace(/^\{\{\{.*\}\}\}\n/, '')
@@ -163,7 +163,7 @@ export const makeOperationInput = (
   actorId: 'alice',
   scopeId: 's1',
   payload: { body: `note ${sequenceNumber}` },
-  command: { commandId: `c${sequenceNumber}`, requestKey: `k${sequenceNumber}` },
+  requestIdentity: { commandId: `c${sequenceNumber}`, requestKey: `k${sequenceNumber}` },
   ...extra,
 })
 

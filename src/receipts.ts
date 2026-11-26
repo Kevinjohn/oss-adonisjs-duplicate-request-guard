@@ -1,3 +1,4 @@
+import { InvalidArgumentsException, RuntimeException } from '@adonisjs/core/exceptions'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
@@ -13,16 +14,13 @@ import {
   E_CONCURRENT_COMMAND,
   E_UNAWAITED_NESTED_COMMAND,
   E_TRANSACTION_LOST,
-  E_TRANSACTION_OWNER,
-  E_UNSAFE_SQLITE_POOL,
-  E_UNSUPPORTED_DIALECT,
-} from './errors.js'
-import type { ExecuteInput, Operation, OperationContext, Outcome, PruneOptions } from './types.js'
+} from './errors.ts'
+import type { ExecuteInput, Operation, OperationContext, Outcome, PruneOptions } from './types.ts'
 
 /** Table created by the published migration. */
 export const RECEIPTS_TABLE = 'request_receipts'
 
-/** The only dialect the package is tested on. Others are refused (see E_UNSUPPORTED_DIALECT). */
+/** The only dialect the package is tested on. Others are refused. */
 const SUPPORTED_DIALECT = 'better-sqlite3'
 
 /**
@@ -144,7 +142,7 @@ function resolveDatabasePath(filename: string) {
  *
  * @example
  * ```ts
- * import { assertSupportedConnection } from '@kevinjohn/adonisjs-duplicate-request-guard'
+ * import { assertSupportedConnection } from '@kevinjohn/adonisjs-request-deduplication'
  * import db from '@adonisjs/lucid/services/db'
  *
  * assertSupportedConnection(db.connection())
@@ -152,7 +150,9 @@ function resolveDatabasePath(filename: string) {
  */
 export function assertSupportedConnection(client: QueryClientContract | TransactionClientContract) {
   if (client.dialect.name !== SUPPORTED_DIALECT) {
-    throw new E_UNSUPPORTED_DIALECT(client.connectionName, client.dialect.name)
+    throw new RuntimeException(
+      `Connection "${client.connectionName}" uses ${client.dialect.name}; request deduplication requires better-sqlite3`
+    )
   }
   const config = (
     client.getWriteClient() as unknown as {
@@ -161,7 +161,7 @@ export function assertSupportedConnection(client: QueryClientContract | Transact
   ).client.config
   const maximumConnectionCount = config.pool?.max ?? 1
   if (maximumConnectionCount !== 1) {
-    throw new E_UNSAFE_SQLITE_POOL(
+    throw new RuntimeException(
       `SQLite connection "${client.connectionName}" allows ${maximumConnectionCount} pooled connections; guarded commands require pool.max = 1`
     )
   }
@@ -181,7 +181,7 @@ export function assertSupportedConnection(client: QueryClientContract | Transact
   }
   const other = [...writers].find((writer) => writer !== connection)
   if (other) {
-    throw new E_UNSAFE_SQLITE_POOL(
+    throw new RuntimeException(
       `SQLite connections "${other.name}" and "${connection.name}" share ${file}; run guarded commands through one connection`
     )
   }
@@ -442,7 +442,7 @@ function assertSettled(frame: Frame) {
  *
  * @example
  * ```ts
- * import { executeIn, type ExecuteInput } from '@kevinjohn/adonisjs-duplicate-request-guard'
+ * import { executeIn, type ExecuteInput } from '@kevinjohn/adonisjs-request-deduplication'
  * import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
  * import { createNote } from '#operations/create_note'
  *
@@ -476,12 +476,15 @@ export function executeIn<Payload, Authorization, Result>(
 
 // Preserve the dispatch identity while leaving authorization lazy and the payload by reference.
 function snapshotInput<Payload>(input: ExecuteInput<Payload>): ExecuteInput<Payload> {
-  const { actorId, scopeId, payload, command } = input
+  const { actorId, scopeId, payload, requestIdentity } = input
   return {
     actorId,
     scopeId,
     payload,
-    command: { commandId: command?.commandId, requestKey: command?.requestKey },
+    requestIdentity: {
+      commandId: requestIdentity?.commandId,
+      requestKey: requestIdentity?.requestKey,
+    },
     get authorization() {
       return input.authorization
     },
@@ -504,7 +507,7 @@ async function executeInTransaction<Payload, Authorization, Result>({
   onClaimed,
 }: TransactionRunInput<Payload, Authorization, Result>): Promise<Outcome<Result>> {
   if (!trx.isTransaction) {
-    throw new E_TRANSACTION_OWNER('executeIn requires a transaction client')
+    throw new InvalidArgumentsException('executeIn requires a transaction client')
   }
   assertSupportedConnection(trx)
   const frame = claimOperationFrame(trx)
@@ -553,7 +556,7 @@ async function runClaimed<Payload, Authorization, Result>({
       serializeCanonicalJson({ scopeId: input.scopeId, payload: input.payload }, refusePayload)
     )
     .digest('hex')
-  assertIdentity(input.command.commandId, input.command.requestKey)
+  assertIdentity(input.requestIdentity.commandId, input.requestIdentity.requestKey)
   // A JSON tuple cannot be confused across the operation/actor boundary.
   const namespace = JSON.stringify([operation.name, input.actorId])
 
@@ -650,9 +653,9 @@ async function reserveAndRun<Payload, Authorization, Result>({
     [
       randomUUID(),
       input.scopeId,
-      input.command.commandId,
+      input.requestIdentity.commandId,
       namespace,
-      input.command.requestKey,
+      input.requestIdentity.requestKey,
       payloadHash,
       writtenAt,
       writtenAt,
@@ -666,8 +669,8 @@ async function reserveAndRun<Payload, Authorization, Result>({
       .where('operation', namespace)
       .where((query) => {
         void query
-          .where('command_id', input.command.commandId)
-          .orWhere('request_key', input.command.requestKey)
+          .where('command_id', input.requestIdentity.commandId)
+          .orWhere('request_key', input.requestIdentity.requestKey)
       })
     // The insert lost to a unique index, yet no row in this namespace matches: the table still
     // has a unique index from an older stub (command_id across every actor).
@@ -675,8 +678,8 @@ async function reserveAndRun<Payload, Authorization, Result>({
     // Two matching rows always differ in command_id or request_key.
     const row = matchingReceipts[0]
     if (
-      row.command_id !== input.command.commandId ||
-      row.request_key !== input.command.requestKey ||
+      row.command_id !== input.requestIdentity.commandId ||
+      row.request_key !== input.requestIdentity.requestKey ||
       row.payload_hash !== payloadHash
     ) {
       throw new E_DUPLICATE_REQUEST_CONFLICT()
@@ -704,7 +707,7 @@ async function reserveAndRun<Payload, Authorization, Result>({
   internalHooks.onClosing?.()
   await completeReceipt(trx, {
     namespace,
-    commandId: input.command.commandId,
+    commandId: input.requestIdentity.commandId,
     serialized: serializeCanonicalJson(result, refuseResult),
   })
   return { replayed: false, result }
@@ -716,7 +719,7 @@ async function reserveAndRun<Payload, Authorization, Result>({
  *
  * @example
  * ```ts
- * import { execute, type ExecuteInput } from '@kevinjohn/adonisjs-duplicate-request-guard'
+ * import { execute, type ExecuteInput } from '@kevinjohn/adonisjs-request-deduplication'
  * import db from '@adonisjs/lucid/services/db'
  * import { createNote } from '#operations/create_note'
  *
@@ -731,7 +734,7 @@ export async function execute<Payload, Authorization, Result>(
   input: ExecuteInput<Payload>
 ): Promise<Outcome<Result>> {
   if (client.isTransaction) {
-    throw new E_TRANSACTION_OWNER(
+    throw new InvalidArgumentsException(
       'execute owns its transaction; inside a host transaction use executeIn'
     )
   }
@@ -748,7 +751,7 @@ export async function execute<Payload, Authorization, Result>(
  *
  * @example
  * ```ts
- * import { pruneReceipts } from '@kevinjohn/adonisjs-duplicate-request-guard'
+ * import { pruneReceipts } from '@kevinjohn/adonisjs-request-deduplication'
  * import db from '@adonisjs/lucid/services/db'
  *
  * const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)

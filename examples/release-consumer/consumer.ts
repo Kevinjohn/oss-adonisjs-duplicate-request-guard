@@ -12,8 +12,8 @@ import {
   execute,
   type ExecuteInput,
   type Operation,
-} from '@kevinjohn/adonisjs-duplicate-request-guard'
-import type { Operation as SubpathOperation } from '@kevinjohn/adonisjs-duplicate-request-guard/types'
+} from '@kevinjohn/adonisjs-request-deduplication'
+import type { Operation as SubpathOperation } from '@kevinjohn/adonisjs-request-deduplication/types'
 import { execute as executeOld, type Operation as OldOperation } from 'old-duplicate-request-guard'
 
 // Compile against both archives' declarations. An inferred parser result must reach work and
@@ -22,6 +22,7 @@ export async function verifyInference(
   client: QueryClientContract,
   input: ExecuteInput<{ body: string }>
 ) {
+  const { requestIdentity, ...baseInput } = input
   const old = await executeOld(
     client,
     {
@@ -35,7 +36,7 @@ export async function verifyInference(
         return { text: payload.body + proof.toUpperCase() }
       },
     },
-    input
+    { ...baseInput, command: requestIdentity }
   )
   const current = await execute(
     client,
@@ -62,7 +63,7 @@ export async function verifyInference(
 }
 
 const root = new URL('./', import.meta.url)
-const packageName = '@kevinjohn/adonisjs-duplicate-request-guard'
+const packageName = '@kevinjohn/adonisjs-request-deduplication'
 const ignitor = new IgnitorFactory()
   .withCoreProviders()
   .withCoreConfig()
@@ -120,17 +121,20 @@ try {
     actorId: 'authenticated-actor',
     scopeId: 'host-authorized-scope',
     payload: { body: 'note' },
-    command: { commandId: 'client-id', requestKey: 'client-key' },
+    requestIdentity: { commandId: 'client-id', requestKey: 'client-key' },
     authorization: 'host-validated proof',
   }
-  const initial = await executeOld(client, oldOperation, input)
+  const initial = await executeOld(client, oldOperation, {
+    ...input,
+    command: input.requestIdentity,
+  })
   assert.deepEqual(initial, { replayed: false, result: { noteId: 1 } })
   const repeated = await execute(client, subpathOperation, { ...input, authorization: undefined })
   assert.deepEqual(repeated, { replayed: true, result: initial.result })
   assert.deepEqual(
     await execute(client, operation, {
       ...input,
-      command: { commandId: 'fresh-id', requestKey: 'fresh-key' },
+      requestIdentity: { commandId: 'fresh-id', requestKey: 'fresh-key' },
     }),
     { replayed: false, result: { noteId: 2 } }
   )

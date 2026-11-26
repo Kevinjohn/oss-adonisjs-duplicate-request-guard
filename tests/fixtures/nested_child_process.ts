@@ -4,13 +4,13 @@ import { AppFactory } from '@adonisjs/core/factories/app'
 import { LoggerFactory } from '@adonisjs/core/factories/logger'
 import { Emitter } from '@adonisjs/core/events'
 import { Database } from '@adonisjs/lucid/database'
-import { executeIn } from '../../index.js'
+import { executeIn } from '../../index.ts'
 import {
   addProof,
   makeAuthorizedOperationInput,
   makeNamedOperation,
   prepareSchema,
-} from '../helpers.js'
+} from '../helpers.ts'
 
 const app = new AppFactory().create(new URL('../', import.meta.url), () => {})
 const db = new Database(

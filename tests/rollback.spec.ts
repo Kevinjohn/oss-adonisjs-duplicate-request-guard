@@ -1,6 +1,6 @@
 import { test } from '@japa/runner'
-import { execute, executeIn } from '../index.js'
-import { internalHooks } from '../src/receipts.js'
+import { execute, executeIn } from '../index.ts'
+import { internalHooks } from '../src/receipts.ts'
 import {
   addProof,
   makeAuthorizedOperationInput,
@@ -13,7 +13,7 @@ import {
   listReceipts,
   makeSignal,
   awaitWithDeadline,
-} from './helpers.js'
+} from './helpers.ts'
 
 test.group('a failed execute never leaves a pending row', () => {
   test('a host that swallows the error and commits keeps nothing from the attempt', async ({

@@ -1,5 +1,5 @@
 import { test } from '@japa/runner'
-import { execute } from '../index.js'
+import { execute } from '../index.ts'
 import {
   DeniedException,
   addProof,
@@ -9,7 +9,7 @@ import {
   makeOperationInput,
   makeNoteOperation,
   listReceipts,
-} from './helpers.js'
+} from './helpers.ts'
 
 test.group('execute: reserve, complete, replay', () => {
   test('a fresh operation runs once and stores a completed receipt', async ({ assert }) => {
@@ -80,15 +80,15 @@ test.group('execute: conflicts', () => {
     { name: 'same identity, different scope', change: { scopeId: 's2' } },
     {
       name: 'same command id, different key',
-      change: { command: { commandId: 'c1', requestKey: 'other' } },
+      change: { requestIdentity: { commandId: 'c1', requestKey: 'other' } },
     },
     {
       name: 'same key, different command id',
-      change: { command: { commandId: 'other', requestKey: 'k1' } },
+      change: { requestIdentity: { commandId: 'other', requestKey: 'k1' } },
     },
     {
       name: 'command id and key from two different receipts',
-      change: { command: { commandId: 'c1', requestKey: 'k2' } },
+      change: { requestIdentity: { commandId: 'c1', requestKey: 'k2' } },
     },
   ]
   for (const { name, change } of conflicts) {
@@ -199,8 +199,8 @@ test.group('what a callback mutates does not change the operation', () => {
     await addProof(client, 'p1')
     const request = { ...makeOperationInput(1), authorization: { proofToken: 'p1' } }
     hooks.afterWork = () => {
-      request.command.commandId = 'rewritten'
-      request.command.requestKey = 'rewritten'
+      request.requestIdentity.commandId = 'rewritten'
+      request.requestIdentity.requestKey = 'rewritten'
       request.actorId = 'bob'
       request.scopeId = 's2'
     }

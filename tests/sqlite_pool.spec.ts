@@ -1,18 +1,18 @@
+import { RuntimeException } from '@adonisjs/core/exceptions'
 import { test } from '@japa/runner'
 import BetterSqlite3 from 'better-sqlite3'
 import { AppFactory } from '@adonisjs/core/factories/app'
 import { LoggerFactory } from '@adonisjs/core/factories/logger'
 import { Emitter } from '@adonisjs/core/events'
 import { Database } from '@adonisjs/lucid/database'
-import { assertSupportedConnection, execute, executeIn } from '../index.js'
+import { assertSupportedConnection, execute, executeIn } from '../index.ts'
 import {
   addProof,
   createDatabase,
-  errors,
   makeOperationInput,
   makeNoteOperation,
   listReceipts,
-} from './helpers.js'
+} from './helpers.ts'
 
 /** The pool knex actually built, to prove the check agrees with it. */
 const readMaximumPoolConnectionCount = (client: unknown) =>
@@ -45,13 +45,10 @@ test.group('SQLite pool rule', () => {
     const { client } = await createDatabase({ max: 2 })
     const { operation, calls } = makeNoteOperation()
     assert.equal(readMaximumPoolConnectionCount(client), 2)
-    await assert.rejects(
-      () => execute(client, operation, makeOperationInput(1)),
-      errors.E_UNSAFE_SQLITE_POOL
-    )
+    await assert.rejects(() => execute(client, operation, makeOperationInput(1)), RuntimeException)
     await assert.rejects(
       () => client.transaction((trx) => executeIn(trx, operation, makeOperationInput(1))),
-      errors.E_UNSAFE_SQLITE_POOL
+      RuntimeException
     )
     assert.equal(calls.access, 0)
   })
@@ -75,11 +72,11 @@ test.group('SQLite pool rule', () => {
     try {
       const client = db.connection()
       assert.equal(client.dialect.name, 'postgres')
-      assert.throws(() => assertSupportedConnection(client), /better-sqlite3 only/)
+      assert.throws(() => assertSupportedConnection(client), /requires better-sqlite3/)
       const { operation, calls } = makeNoteOperation()
       await assert.rejects(
         () => execute(client, operation, makeOperationInput(1)),
-        errors.E_UNSUPPORTED_DIALECT
+        RuntimeException
       )
       assert.equal(calls.access, 0)
     } finally {

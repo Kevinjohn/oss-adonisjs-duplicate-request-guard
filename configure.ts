@@ -1,18 +1,35 @@
-import { mkdir, readdir, rmdir } from 'node:fs/promises'
-import { join, sep } from 'node:path'
+import { createHash } from 'node:crypto'
+import { mkdir, readdir, realpath, rmdir } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, dirname, join, sep } from 'node:path'
 import { RuntimeException } from '@adonisjs/core/exceptions'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { pathToFileURL } from 'node:url'
 import { sourceFiles } from '@adonisjs/lucid/utils'
 import type Configure from '@adonisjs/core/commands/configure'
 
-/** Directory holding the package stubs, next to this file in source and in build. */
-export const stubsRoot = fileURLToPath(new URL('./stubs/', import.meta.url))
+import { stubsRoot } from './stubs/main.ts'
 
 const MIGRATION_IDENTITY = '_create_request_receipts_table'
 const MIGRATION_SUFFIX = `${MIGRATION_IDENTITY}.ts`
 
+// Resolve aliases even if the migration directory is not there yet, so its creation
+// cannot change which publication claim applies to a path.
+async function resolveMigrationsPath(path: string): Promise<string> {
+  try {
+    return await realpath(path)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    return join(await resolveMigrationsPath(dirname(path)), basename(path))
+  }
+}
+
 async function hasReceiptsMigration(migrationsPath: string): Promise<boolean> {
-  const entries = await readdir(migrationsPath, { withFileTypes: true, recursive: true })
+  const entries = await readdir(migrationsPath, { withFileTypes: true, recursive: true }).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return []
+      throw error
+    }
+  )
   for (const entry of entries) {
     if (entry.name.endsWith(MIGRATION_SUFFIX) && !entry.isFile()) {
       throw new RuntimeException(
@@ -20,6 +37,7 @@ async function hasReceiptsMigration(migrationsPath: string): Promise<boolean> {
       )
     }
   }
+  if (entries.length === 0) return false
   const { files } = await sourceFiles(pathToFileURL(migrationsPath + sep), './', false)
   return files.some(
     ({ absPath, name }) => !absPath.endsWith('.json') && name.endsWith(MIGRATION_IDENTITY)
@@ -28,19 +46,15 @@ async function hasReceiptsMigration(migrationsPath: string): Promise<boolean> {
 
 /** Publishes the receipts migration once, with an exclusive publication claim. */
 export async function configure(command: Configure) {
-  const migrationsPath = command.app.migrationsPath()
-  // A new app has no migrations directory; any other read failure must stop configure.
-  await readdir(migrationsPath).catch(async (error: NodeJS.ErrnoException) => {
-    if (error.code !== 'ENOENT') throw error
-    await mkdir(migrationsPath, { recursive: true })
-  })
-  const claim = join(migrationsPath, '.request-receipts-configure.lock')
+  const migrationsPath = await resolveMigrationsPath(command.app.migrationsPath())
+  const key = createHash('sha256').update(migrationsPath).digest('hex')
+  const claim = join(tmpdir(), `request-receipts-configure-${key}.lock`)
   try {
     await mkdir(claim)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
     throw new RuntimeException(
-      `request receipts migration publication is already claimed; wait for configure to finish and rerun. If it stopped unexpectedly, remove the empty .request-receipts-configure.lock directory before rerunning. Lock directory: ${claim}`
+      `request receipts migration publication is already claimed; wait for configure to finish and rerun. If it stopped unexpectedly, remove the empty directory listed below before rerunning. Lock directory: ${claim}`
     )
   }
   try {
@@ -50,9 +64,9 @@ export async function configure(command: Configure) {
       return
     }
     const codemods = await command.createCodemods()
-    await codemods.makeUsingStub(stubsRoot, 'migrations/create_request_receipts_table.stub', {
+    await codemods.makeUsingStub(stubsRoot, 'make/migration/create_request_receipts_table.stub', {
       migration: {
-        destination: command.app.migrationsPath(`${Date.now()}${MIGRATION_SUFFIX}`),
+        filename: `${Date.now()}${MIGRATION_SUFFIX}`,
       },
     })
   } finally {

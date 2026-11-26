@@ -1,4 +1,4 @@
-# @kevinjohn/adonisjs-duplicate-request-guard
+# @kevinjohn/adonisjs-request-deduplication
 
 Run each request once. When the same request arrives again (a double-click, or a retry after a
 dropped connection), the client gets the first result back instead of a second execution.
@@ -7,42 +7,43 @@ For AdonisJS 7 and Lucid 22. Each request's receipt is reserved by a unique inde
 the same transaction as the request's own writes, so a failed request leaves nothing behind and its
 retry runs fresh.
 
-> Pre-release. Installed from GitHub releases; not published to npm.
+> Pre-release. Distributed through GitHub release archives.
 
 ## Install
 
+Download the `kevinjohn-adonisjs-request-deduplication-*.tgz` archive from the
+[releases page](https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/releases)
+and install it from your application. Each release lists the archive's SHA-256.
+
 ```sh
-pnpm add https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/releases/download/v0.3.1/kevinjohn-adonisjs-duplicate-request-guard-0.3.1.tgz
-node ace configure @kevinjohn/adonisjs-duplicate-request-guard   # publishes the receipts migration once
+pnpm add /path/to/downloaded-archive.tgz
+node ace configure @kevinjohn/adonisjs-request-deduplication
 node ace migration:run
 ```
 
-`configure` writes the migration to the app's migrations directory (`app.migrationsPath()`,
-`database/migrations` by default). If a connection sets its own `migrations.paths` without that
-directory, move the file into one of those paths, or add the directory to them, before
-`migration:run`. Configure recognises regular receipts migrations in this directory and its subdirectories. If configure reports a matching symlink or other non-file entry, replace it with a regular migration file or remove it before rerunning.
+The package name changes in the next release. For `0.3.1` and earlier, follow the
+[README for that release](https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/blob/v0.3.1/README.md).
 
-Since v0.2.0, concurrent configure publication is exclusive. If a simultaneous
-configure fails because another process owns publication, let the first finish then rerun.
-If configure stops unexpectedly, check that no configure is still running before removing its
-empty `.request-receipts-configure.lock` directory in the migrations directory; the error names
-its full path. The lock is temporary; migration names and
-contents are unchanged.
+## What configure changes
 
-Peers: `@adonisjs/core` ^7.0.0, `@adonisjs/lucid` ^22.0.0. Node >= 24. Each release lists its
-archive's SHA-256.
+`configure` publishes one receipts migration to `app.migrationsPath()`, which defaults to
+`database/migrations`. It preserves an existing regular receipts migration in that directory or
+its subdirectories. If configure reports a matching symlink or other non-file entry, replace it
+with a regular migration file or remove it before rerunning.
 
-The configure hook uses Core's `makeUsingStub`, not an Assembler code transformer, so this package
-does not declare an Assembler peer. On every pull request a clean packed-candidate consumer
-configures twice, runs the migration and replays a v0.1.3 receipt without Assembler: the `checks`
-workflow runs it on Core 7.6.0/Lucid 22.4.2 and the `minimum peers` workflow on Core 7.0.0/Lucid
-22.0.0.
+If another configure run owns publication, let it finish and rerun. If it stops unexpectedly,
+confirm that no configure process is still running before removing the empty lock directory
+named in the error. Run configure processes for the same application with the same system
+temporary directory.
 
-## User stories
+## Configuration
 
-See the [user story catalogue](https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/blob/main/user-stories/README.md) for operation behaviour, transaction boundaries, replay authorisation and receipt storage.
+Configure a Lucid `better-sqlite3` connection with a pool maximum of one. If your connection
+sets its own `migrations.paths`, include the directory where configure publishes the migration
+or move the file into one of those paths before running migrations. The package takes its settings
+from the Lucid connection and the inputs you pass to its API.
 
-## Use
+## Usage
 
 Request deduplication protects database writes made through the operation's transaction. If an email or
 webhook must survive retries, record it in the same transaction and let a separate delivery
@@ -50,7 +51,7 @@ process send it.
 
 ```ts
 import db from '@adonisjs/lucid/services/db'
-import { execute, type Operation } from '@kevinjohn/adonisjs-duplicate-request-guard'
+import { execute, type Operation } from '@kevinjohn/adonisjs-request-deduplication'
 
 const createNote: Operation<{ body: string }, undefined, { noteId: number }> = {
   name: 'notes.create',
@@ -97,7 +98,7 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
 
 ## Contracts
 
-- **Database.** better-sqlite3 only. Other dialects throw `E_UNSUPPORTED_DIALECT` before any query.
+- **Database.** better-sqlite3 only. Other dialects throw `RuntimeException` before any query.
 - **Owners.** `execute` opens and commits its own transaction, once, without retrying. Inside a
   transaction you own (for example Account Kit `withCurrent`), call `executeIn(trx, ...)`. The two
   are mutually exclusive: `execute` rejects a transaction client, `executeIn` requires one. Wrapping
@@ -154,7 +155,7 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
   identity runs fresh next time. A refused replay preserves its completed receipt; a later permitted
   attempt replays that result.
 - **SQLite writers.** better-sqlite3 waits for locks synchronously, so a second in-process writer
-  stalls the event loop. `E_UNSAFE_SQLITE_POOL` is thrown when `pool.max` is not 1 (the knex
+  stalls the event loop. `RuntimeException` is thrown when `pool.max` is not 1 (the knex
   default), or when a second open Lucid connection (any name, any Database instance, symlinks
   resolved, surrounding whitespace trimmed as the driver does) runs operations on a file another open
   connection already used. Hard-linked paths and `file:` URI filenames are not detected. Closing a
@@ -169,7 +170,7 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
   before anything commits: `E_INVALID_COMMAND_VALUE` (400) for payloads, checked before
   `authorizeAccess`, `E_INVALID_COMMAND_RESULT` (500) for results. A replay returns JSON-equal data
   (-0 comes back as 0), whatever `authorizeReplay` did to the copy it was given: redact or decorate
-  the result after `execute` returns. Actor, scope and command identity are read once when the call
+  the result after `execute` returns. Actor, scope and request identity are read once when the call
   starts; keep the payload itself unchanged until the call settles.
 - **Identity scope.** Command ids and request keys are scoped to one actor's operation. Another
   actor using the same ids runs its own operation and learns nothing about yours. Command ids and
@@ -181,13 +182,27 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
 
 ## Errors
 
-Match a guard failure by its `code` or with `instanceof errors.E_<CODE>`, for example
+Match an operation failure by its `code` or with `instanceof errors.E_<CODE>`, for example
 `error instanceof errors.E_DUPLICATE_REQUEST_CONFLICT`. The same code-named constructors are
 available as named imports from the package.
 
-The `@adonisjs/core` exceptions are `E_DUPLICATE_REQUEST_CONFLICT` (409),
+The operation exceptions are `E_DUPLICATE_REQUEST_CONFLICT` (409),
 `E_DUPLICATE_REQUEST_IN_PROGRESS` (409, only on re-entry from the operation's own `work` or authorisation callbacks),
 `E_INVALID_COMMAND_VALUE` (400), `E_CONCURRENT_COMMAND`, `E_UNAWAITED_NESTED_COMMAND`,
 `E_INVALID_COMMAND_RESULT`, `E_RECEIPT_NOT_PENDING`,
-`E_RECEIPT_SCHEMA` (receipts table from an older stub), `E_TRANSACTION_LOST`, `E_TRANSACTION_OWNER`,
-`E_UNSAFE_SQLITE_POOL`, `E_UNSUPPORTED_DIALECT` (500).
+`E_RECEIPT_SCHEMA` (receipts table from an older stub) and `E_TRANSACTION_LOST` (500).
+
+A mismatched transaction client throws `InvalidArgumentsException` from
+`@adonisjs/core/exceptions`. An unsupported database dialect or unsafe SQLite pool or writer
+configuration throws `RuntimeException` from the same module.
+
+## Supported versions
+
+Use Node 24 or newer, AdonisJS Core ^7.0.0 and Lucid ^22.0.0. The configure hook declares
+Assembler ^8.6.0 as an optional peer. The clean consumer checks exercise this migration
+with the current and minimum Core and Lucid versions.
+
+## User stories
+
+The [user story catalogue](https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/blob/main/user-stories/README.md)
+covers operation behaviour, transaction boundaries, replay authorisation and receipt storage.

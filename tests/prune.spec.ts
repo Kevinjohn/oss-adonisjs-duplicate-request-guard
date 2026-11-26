@@ -1,6 +1,6 @@
 import { test } from '@japa/runner'
 import { Worker } from 'node:worker_threads'
-import { execute, pruneReceipts, RECEIPTS_TABLE } from '../index.js'
+import { execute, pruneReceipts, RECEIPTS_TABLE } from '../index.ts'
 import {
   addProof,
   countRows,
@@ -8,7 +8,7 @@ import {
   makeOperationInput,
   makeNoteOperation,
   listReceipts,
-} from './helpers.js'
+} from './helpers.ts'
 
 const N = 30
 async function seed(client: Parameters<typeof addProof>[0]) {
