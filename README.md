@@ -11,6 +11,10 @@ retry runs fresh.
 
 ## Install
 
+AdonisJS normally combines installation and configuration with
+`node ace add @kevinjohn/adonisjs-request-deduplication --package-manager=pnpm`.
+Current releases are GitHub archives, so use the two-step installation below instead.
+
 Download the `kevinjohn-adonisjs-request-deduplication-*.tgz` archive from the
 [releases page](https://github.com/Kevinjohn/oss-adonisjs-duplicate-request-guard/releases)
 and install it from your application. Each release lists the archive's SHA-256.
