@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- The package is now `@kevinjohn/adonisjs-request-deduplication`. Remove
+  `@kevinjohn/adonisjs-duplicate-request-guard`, install the new release archive, and update
+  root and `/types` imports and any Ace configure commands to use the new package name.
+- Import `requestDeduplicator` and call its `execute`, `executeIn`, `pruneReceipts` and
+  `assertSupportedConnection` methods. Replace the four previous named function imports.
+- Replace `ExecuteInput.command` with `ExecuteInput.requestIdentity` in calls to `execute` and
+  `executeIn`. Replace imports of `CommandIdentity` with `RequestIdentity`. Keep sending the
+  same `commandId` and `requestKey` values on retries. Existing migrations and stored receipts
+  continue to work without a database change.
+- Replace catches for `E_TRANSACTION_OWNER` with `InvalidArgumentsException` and catches for
+  `E_UNSAFE_SQLITE_POOL` or `E_UNSUPPORTED_DIALECT` with `RuntimeException`, imported from
+  `@adonisjs/core/exceptions`. The three old exports and their named exception classes have
+  been removed.
+
+### Changed
+
+- Configure publishes the migration through the framework codemod. It takes its publication
+  lock at the application root and reports the full path if a lock is already held.
+  Finish any configure run using the old release before upgrading.
+- Assembler ^8.6.0 is declared as an optional peer for configure tooling.
+
 ## 0.3.1 - 2026-11-25
 
 - Exercise transaction composition against the published Account Kit `0.8.0` archive.

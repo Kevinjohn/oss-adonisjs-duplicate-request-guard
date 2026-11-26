@@ -1,6 +1,6 @@
 import { test } from '@japa/runner'
-import { executeIn } from '../index.js'
-import { internalHooks } from '../src/receipts.js'
+import { requestDeduplicator } from '../index.ts'
+import { internalHooks } from '../src/receipts.ts'
 import {
   addProof,
   countRows,
@@ -8,7 +8,7 @@ import {
   makeOperationInput as makeBaseCommandInput,
   makeNoteOperation,
   listReceipts,
-} from './helpers.js'
+} from './helpers.ts'
 
 test('a child aborted during reservation never parses authorization and retries fresh', async ({
   assert,
@@ -44,9 +44,9 @@ test('a child aborted during reservation never parses authorization and retries 
       },
     })
     parent.hooks.afterWork = async () => {
-      childResult = executeIn(trx, child.operation, makeOperationInput(2)).catch(
-        (failure) => failure
-      )
+      childResult = requestDeduplicator
+        .executeIn(trx, child.operation, makeOperationInput(2))
+        .catch((failure) => failure)
       await Promise.race([
         reserved.promise,
         childResult.then((outcome) => {
@@ -60,9 +60,9 @@ test('a child aborted during reservation never parses authorization and retries 
       release.resolve()
     }
     try {
-      const failure = await executeIn(trx, parent.operation, makeOperationInput(1)).catch(
-        (caught) => caught
-      )
+      const failure = await requestDeduplicator
+        .executeIn(trx, parent.operation, makeOperationInput(1))
+        .catch((caught) => caught)
       const childError = await childResult
       assert.equal((childError as { code?: string }).code, 'E_UNAWAITED_NESTED_COMMAND')
       return failure
@@ -85,7 +85,7 @@ test('a child aborted during reservation never parses authorization and retries 
   )
 
   const retry = await client.transaction((trx) =>
-    executeIn(trx, child.operation, makeOperationInput(2))
+    requestDeduplicator.executeIn(trx, child.operation, makeOperationInput(2))
   )
   assert.isFalse(retry.replayed)
   assert.deepEqual(child.calls, { access: 2, parse: 1, execute: 1, work: 1, replay: 0 })

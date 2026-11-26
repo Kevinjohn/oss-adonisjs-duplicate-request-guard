@@ -1,6 +1,6 @@
 import { test } from '@japa/runner'
-import { execute, executeIn } from '../index.js'
-import { internalHooks } from '../src/receipts.js'
+import { requestDeduplicator } from '../index.ts'
+import { internalHooks } from '../src/receipts.ts'
 import {
   addProof,
   makeAuthorizedOperationInput,
@@ -13,7 +13,7 @@ import {
   listReceipts,
   makeSignal,
   awaitWithDeadline,
-} from './helpers.js'
+} from './helpers.ts'
 
 test.group('a failed execute never leaves a pending row', () => {
   test('a host that swallows the error and commits keeps nothing from the attempt', async ({
@@ -26,10 +26,12 @@ test.group('a failed execute never leaves a pending row', () => {
       throw new Error('after the side effect')
     }
     await client.transaction(async (trx) => {
-      const swallowed = await executeIn(trx, operation, {
-        ...makeOperationInput(1),
-        authorization: { proofToken: 'p1' },
-      }).catch(() => null)
+      const swallowed = await requestDeduplicator
+        .executeIn(trx, operation, {
+          ...makeOperationInput(1),
+          authorization: { proofToken: 'p1' },
+        })
+        .catch(() => null)
       assert.isNull(swallowed)
       await trx.table('notes').insert({ scope_id: 's1', body: 'host write' })
     })
@@ -39,7 +41,7 @@ test.group('a failed execute never leaves a pending row', () => {
     assert.equal(proof.used, 0)
 
     hooks.afterWork = undefined
-    const retry = await execute(client, operation, {
+    const retry = await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
@@ -54,7 +56,7 @@ test.group('a failed execute never leaves a pending row', () => {
     for (const sequenceNumber of [1, 2]) await addProof(client, `p${sequenceNumber}`)
     let pending: Promise<unknown> = Promise.resolve()
     hooks.afterWork = ({ trx }) => {
-      pending = executeIn(trx, operation, {
+      pending = requestDeduplicator.executeIn(trx, operation, {
         ...makeOperationInput(2),
         authorization: { proofToken: 'p2' },
       })
@@ -62,13 +64,15 @@ test.group('a failed execute never leaves a pending row', () => {
       throw Object.freeze(new Error('frozen'))
     }
     await client.transaction(async (trx) => {
-      const error = await executeIn(trx, operation, {
-        ...makeOperationInput(1),
-        authorization: { proofToken: 'p1' },
-      }).then(
-        () => 'resolved',
-        (reason: Error) => reason.message
-      )
+      const error = await requestDeduplicator
+        .executeIn(trx, operation, {
+          ...makeOperationInput(1),
+          authorization: { proofToken: 'p1' },
+        })
+        .then(
+          () => 'resolved',
+          (reason: Error) => reason.message
+        )
       assert.equal(error, 'frozen')
       await trx.table('notes').insert({ scope_id: 's1', body: 'host write' })
     })
@@ -94,7 +98,9 @@ test.group('cleanup never masks the original error', () => {
     const trx = await client.transaction()
     let caught: (Error & { code?: string }) | undefined
     try {
-      await awaitWithDeadline(executeIn(trx, operation, makeAuthorizedOperationInput(1)))
+      await awaitWithDeadline(
+        requestDeduplicator.executeIn(trx, operation, makeAuthorizedOperationInput(1))
+      )
     } catch (error) {
       caught = error as Error & { code?: string }
     } finally {
@@ -140,7 +146,11 @@ test.group('an aborted child never commits without its receipt', (group) => {
     }
     parent.hooks.afterWork = async ({ trx }) => {
       releaseOnUnwind(release.fire)
-      childRun = executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
+      childRun = requestDeduplicator.executeIn(
+        trx,
+        child.operation,
+        makeAuthorizedOperationInput(2)
+      )
       const settle = () => {
         state.childSettled = true
       }
@@ -166,19 +176,17 @@ test.group('an aborted child never commits without its receipt', (group) => {
       let parentCause: unknown
       await awaitWithDeadline(
         client.transaction(async (trx) => {
-          parentError = await executeIn(
-            trx,
-            parent.operation,
-            makeAuthorizedOperationInput(1)
-          ).then(
-            () => 'fulfilled',
-            (error: Error) => {
-              parentCause = error.cause
-              return error.message
-            }
-          )
+          parentError = await requestDeduplicator
+            .executeIn(trx, parent.operation, makeAuthorizedOperationInput(1))
+            .then(
+              () => 'fulfilled',
+              (error: Error) => {
+                parentCause = error.cause
+                return error.message
+              }
+            )
           if (waits) await childSettled()
-          await executeIn(trx, next.operation, makeAuthorizedOperationInput(3))
+          await requestDeduplicator.executeIn(trx, next.operation, makeAuthorizedOperationInput(3))
         })
       )
       assert.equal(parentError, 'validation failed')
@@ -190,7 +198,7 @@ test.group('an aborted child never commits without its receipt', (group) => {
       assert.deepEqual(await listReceiptStates(client), [['c3', 'completed']])
       assert.equal(await countRows(client, 'notes'), 1)
       const retry = await client.transaction((trx) =>
-        executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
+        requestDeduplicator.executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
       )
       assert.isFalse(retry.replayed)
       assert.equal(child.calls.work, 2)
@@ -215,16 +223,18 @@ test.group('an aborted child never commits without its receipt', (group) => {
     let childCode = ''
     parent.hooks.afterWork = async ({ trx }) => {
       releaseOnUnwind(release.fire)
-      const nested = executeIn(trx, child.operation, makeAuthorizedOperationInput(2)).catch(
-        (error: { code?: string }) => {
+      const nested = requestDeduplicator
+        .executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
+        .catch((error: { code?: string }) => {
           childCode = error.code ?? 'other'
-        }
-      )
+        })
       await Promise.all([nested, inAccess.fired.then(() => Promise.reject(new Error('invalid')))])
     }
     await awaitWithDeadline(
       client.transaction((trx) =>
-        executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)).catch(() => null)
+        requestDeduplicator
+          .executeIn(trx, parent.operation, makeAuthorizedOperationInput(1))
+          .catch(() => null)
       )
     )
     assert.equal(childCode, 'E_UNAWAITED_NESTED_COMMAND')

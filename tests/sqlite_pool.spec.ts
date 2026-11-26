@@ -1,18 +1,18 @@
+import { RuntimeException } from '@adonisjs/core/exceptions'
 import { test } from '@japa/runner'
 import BetterSqlite3 from 'better-sqlite3'
 import { AppFactory } from '@adonisjs/core/factories/app'
 import { LoggerFactory } from '@adonisjs/core/factories/logger'
 import { Emitter } from '@adonisjs/core/events'
 import { Database } from '@adonisjs/lucid/database'
-import { assertSupportedConnection, execute, executeIn } from '../index.js'
+import { requestDeduplicator } from '../index.ts'
 import {
   addProof,
   createDatabase,
-  errors,
   makeOperationInput,
   makeNoteOperation,
   listReceipts,
-} from './helpers.js'
+} from './helpers.ts'
 
 /** The pool knex actually built, to prove the check agrees with it. */
 const readMaximumPoolConnectionCount = (client: unknown) =>
@@ -31,7 +31,7 @@ test.group('SQLite pool rule', () => {
       const { operation } = makeNoteOperation()
       await addProof(client, 'p1')
       assert.equal(readMaximumPoolConnectionCount(client), 1)
-      const outcome = await execute(client, operation, {
+      const outcome = await requestDeduplicator.execute(client, operation, {
         ...makeOperationInput(1),
         authorization: { proofToken: 'p1' },
       })
@@ -46,12 +46,15 @@ test.group('SQLite pool rule', () => {
     const { operation, calls } = makeNoteOperation()
     assert.equal(readMaximumPoolConnectionCount(client), 2)
     await assert.rejects(
-      () => execute(client, operation, makeOperationInput(1)),
-      errors.E_UNSAFE_SQLITE_POOL
+      () => requestDeduplicator.execute(client, operation, makeOperationInput(1)),
+      RuntimeException
     )
     await assert.rejects(
-      () => client.transaction((trx) => executeIn(trx, operation, makeOperationInput(1))),
-      errors.E_UNSAFE_SQLITE_POOL
+      () =>
+        client.transaction((trx) =>
+          requestDeduplicator.executeIn(trx, operation, makeOperationInput(1))
+        ),
+      RuntimeException
     )
     assert.equal(calls.access, 0)
   })
@@ -75,11 +78,14 @@ test.group('SQLite pool rule', () => {
     try {
       const client = db.connection()
       assert.equal(client.dialect.name, 'postgres')
-      assert.throws(() => assertSupportedConnection(client), /better-sqlite3 only/)
+      assert.throws(
+        () => requestDeduplicator.assertSupportedConnection(client),
+        /requires better-sqlite3/
+      )
       const { operation, calls } = makeNoteOperation()
       await assert.rejects(
-        () => execute(client, operation, makeOperationInput(1)),
-        errors.E_UNSUPPORTED_DIALECT
+        () => requestDeduplicator.execute(client, operation, makeOperationInput(1)),
+        RuntimeException
       )
       assert.equal(calls.access, 0)
     } finally {
@@ -107,7 +113,7 @@ test.group('SQLite writer lock', () => {
       }
     }
     try {
-      const outcome = await execute(client, operation, {
+      const outcome = await requestDeduplicator.execute(client, operation, {
         ...makeOperationInput(1),
         authorization: { proofToken: 'p1' },
       })
@@ -134,9 +140,9 @@ test.group('concurrent duplicates', () => {
       await gate
     }
     const body = { ...makeOperationInput(1), authorization: { proofToken: 'p1' } }
-    const first = execute(client, operation, body)
+    const first = requestDeduplicator.execute(client, operation, body)
     await inWork
-    const second = execute(client, operation, body)
+    const second = requestDeduplicator.execute(client, operation, body)
     await new Promise((resolve) => setTimeout(resolve, 50))
     release()
     const outcomes = await Promise.all([first, second])

@@ -4,7 +4,7 @@ As a transaction owner, I want a deduplicated operation to share my transaction 
 
 **Status:** Current with an active transaction client; callers must await sequential operations or use supported nesting.
 **Access:** Host owns transaction (for example Account Kit `withCurrent`); only better-sqlite3, pool max 1, one Lucid connection per SQLite file.
-**Entry:** Call `executeIn(trx, operation, input)` inside the transaction callback.
+**Entry:** Call `requestDeduplicator.executeIn(trx, operation, input)` inside the transaction callback.
 **Documentation:** [README transaction contracts](../README.md#contracts)
 **Source:** [`executeIn`](../src/receipts.ts)
 **Coverage:** [`tests/nesting.spec.ts`](../tests/nesting.spec.ts), [`tests/rollback.spec.ts`](../tests/rollback.spec.ts), [`tests/connections.spec.ts`](../tests/connections.spec.ts)
@@ -12,7 +12,7 @@ As a transaction owner, I want a deduplicated operation to share my transaction 
 ## Acceptance criteria
 
 - Inputs: `trx` (required; must be a transaction client on a supported connection), `operation` (an `Operation`), and `input` (`ExecuteInput`: `actorId`, `scopeId`, `payload`, `command`, optional `authorization`). Returns `Promise<Outcome<Result>>`, that is `{ replayed, result }`.
-- `execute` rejects transaction clients; `executeIn` rejects non-transaction clients (`E_TRANSACTION_OWNER`). Calling `execute` with a base connection inside another transaction is not detected as such and can instead time out acquiring the only pooled connection.
+- `execute` rejects transaction clients; `executeIn` rejects non-transaction clients (`InvalidArgumentsException`). Calling `execute` with a base connection inside another transaction is not detected as such and can instead time out acquiring the only pooled connection.
 - After validation, each operation opens a savepoint on the caller transaction; nested `executeIn` is supported from the innermost operation authorisation callbacks/work.
 - Sibling calls, calls with lost async context and calls from a parent that has already returned fail immediately with `E_CONCURRENT_COMMAND`. A late nested call from a still-innermost closing or aborted frame, or a parent finishing with an open nested operation, fails with `E_UNAWAITED_NESTED_COMMAND`. Parent unwinding marks every open descendant aborted and waits for its children to settle before rollback. It observes each aborted promise, including a grandchild that settles before its own parent unwinds. Awaiting an aborted call still rejects. A dropped failure that settled without an ancestor abort remains unhandled. A child that never settles keeps the parent waiting.
 - Authorisation callbacks and `work` must be database-only and safe to rerun if the transaction owner reruns its callback. Do not wrap either API in an independent retry loop.
@@ -58,4 +58,4 @@ flowchart TD
     C -->|Sibling, lost context or late child| H["Concurrency or unawaited error immediately"]
 ```
 
-**Code references:** [executeIn](../src/receipts.ts#L457), [descendant abort](../src/receipts.ts#L386), [savepoint and nested execution](../src/receipts.ts#L539), [shared execution and replay flow](US-GUARD-01-execute-command.md#code-flow), [Operation](../src/types.ts#L41), [ExecuteInput](../src/types.ts#L56)
+**Code references:** [executeIn](../src/receipts.ts#L708), [descendant abort](../src/receipts.ts#L328), [savepoint and nested execution](../src/receipts.ts#L442), [shared execution and replay flow](US-GUARD-01-execute-command.md#code-flow), [Operation](../src/types.ts#L41), [ExecuteInput](../src/types.ts#L56)

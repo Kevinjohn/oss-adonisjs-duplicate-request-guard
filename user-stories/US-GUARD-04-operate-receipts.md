@@ -4,7 +4,7 @@ As an application operator, I want to configure the receipt table and a supporte
 
 **Status:** Operator.
 **Access:** Host operator with migration and connection configuration access.
-**Entry:** `node ace configure @kevinjohn/adonisjs-duplicate-request-guard`, followed by `node ace migration:run`.
+**Entry:** `node ace configure @kevinjohn/adonisjs-request-deduplication`, followed by `node ace migration:run`.
 **Documentation:** [Install and connection contracts](../README.md#install).
 **Source:** [configure](../configure.ts), [connection validation](../src/receipts.ts).
 **Coverage:** [Configure tests](../tests/configure.spec.ts), [connection tests](../tests/connections.spec.ts).
@@ -26,7 +26,7 @@ As an application operator, I want to configure the receipt table and a supporte
 flowchart TD
     A["Operator configures one SQLite writer connection"] --> B["Run configure"]
     B --> R{"Migrations directory readable?"}
-    R -->|Missing| L["Create directory and claim publication"]
+    R -->|Missing| L["Claim publication"]
     R -->|Unreadable| X["Configure fails; nothing published; fix directory and rerun"]
     X --> B
     R -->|Yes| L
@@ -53,20 +53,18 @@ Scope: configure publication and connection validation; application migration ex
 
 ```mermaid
 flowchart TD
-    A["configure(command)"] --> B["readdir(migrationsPath)"]
-    B --> R{"Read error?"}
-    R -->|ENOENT| K["Create migrations directory"]
-    K --> L["Acquire exclusive publication claim"]
-    R -->|Other error| X["Rethrow before createCodemods"]
-    R -->|No| L
+    A["configure(command)"] --> L["Acquire exclusive claim at the application root"]
+    L -->|Filesystem error| X["Rethrow before createCodemods"]
     L -->|Claim path already exists| Z["Throw publication claim error with rerun guidance"]
     L -->|Other claim error| X
-    L -->|Acquired| N{"Recursive readdir: an entry ending _create_request_receipts_table.ts that is not a regular file?"}
+    L -->|Acquired| R{"Migrations directory exists?"}
+    R -->|No| E
+    R -->|Yes| N{"Recursive readdir: an entry ending _create_request_receipts_table.ts that is not a regular file?"}
     N -->|Yes, including a symlink| Y["Throw naming the entry before createCodemods; finally removes claim"]
     N -->|No| C{"Lucid sourceFiles inventory, recursive: a script file named *_create_request_receipts_table?"}
     C -->|Yes| D["Log skip and return from configure"]
     D --> T["Release publication claim"]
-    C -->|No| E["codemods.makeUsingStub publishes migration"]
+    C -->|No| E["codemods.makeUsingStub creates directories as needed and publishes migration"]
     E -->|Success| T
     E -->|Throws| P["finally removes claim; propagate error"]
     N -->|Directory inspection fails| P
@@ -76,8 +74,8 @@ flowchart TD
     G["execute, executeIn, pruneReceipts or explicit host boot check"] --> H["assertSupportedConnection"]
     H --> I["Validate dialect, pool and resolved-file ownership"]
     I -->|Valid| J["Continue to operation"]
-    I -->|Invalid| Q["E_UNSUPPORTED_DIALECT or E_UNSAFE_SQLITE_POOL"]
+    I -->|Invalid| Q["RuntimeException"]
     I -->|Database path cannot be inspected| Q2["Filesystem error surfaces unchanged; nothing registered"]
 ```
 
-**Code references:** [Configure hook](../configure.ts), [migration](../stubs/migrations/create_request_receipts_table.stub), [connection check](../src/receipts.ts#L153).
+**Code references:** [Configure hook](../configure.ts), [migration](../stubs/make/migration/create_request_receipts_table.stub), [connection check](../src/receipts.ts#L642).

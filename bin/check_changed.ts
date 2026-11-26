@@ -5,7 +5,7 @@ import {
   planChangedChecks,
   type ChangedCheckStep,
   type ChangedFile,
-} from './check_changed_plan.js'
+} from './check_changed_plan.ts'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const stepLimitMs = 15 * 60 * 1000

@@ -1,6 +1,6 @@
 import { test } from '@japa/runner'
-import { execute, type Operation } from '../index.js'
-import { countRows, createDatabase, makeOperationInput, listReceipts } from './helpers.js'
+import { requestDeduplicator, type Operation } from '../index.ts'
+import { countRows, createDatabase, makeOperationInput, listReceipts } from './helpers.ts'
 
 test.group('execute: optional authorisation callbacks', () => {
   for (const replay of [false, true]) {
@@ -49,7 +49,7 @@ test.group('execute: optional authorisation callbacks', () => {
               return { noteId: Number(noteId) }
             },
           }
-          const fresh = await execute(client, operation, {
+          const fresh = await requestDeduplicator.execute(client, operation, {
             ...makeOperationInput(1),
             authorization: 'opaque proof',
           })
@@ -61,7 +61,7 @@ test.group('execute: optional authorisation callbacks', () => {
             'work',
           ])
           calls.length = 0
-          const again = await execute(client, operation, {
+          const again = await requestDeduplicator.execute(client, operation, {
             ...makeOperationInput(1),
             authorization: 'invalid on fresh',
           })
@@ -91,7 +91,9 @@ test.group('execute: optional authorisation callbacks', () => {
         return null
       },
     }
-    const failure = await execute(client, operation, makeOperationInput(1)).catch((error) => error)
+    const failure = await requestDeduplicator
+      .execute(client, operation, makeOperationInput(1))
+      .catch((error) => error)
     assert.strictEqual(failure, denied)
     assert.equal(workRuns, 0)
     assert.lengthOf(await listReceipts(client), 0)

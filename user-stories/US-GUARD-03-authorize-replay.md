@@ -5,7 +5,7 @@ As an operation caller, I want request deduplication to check current access bef
 **Status:** Current.
 **Access:** `authorizeAccess` runs for fresh and replay calls after initial payload validation; optional `authorizeReplay` runs on completed matching replay. Omission permits replay after access authorisation callback passes.
 **Entry:** Call `execute` or `executeIn` using the original operation namespace and identity.
-**Documentation:** [README operation authorisation callback order](../README.md#use)
+**Documentation:** [README operation authorisation callback order](../README.md#usage)
 **Source:** [`reserveAndRun`](../src/receipts.ts)
 **Coverage:** [`tests/optional_authorization_callbacks.spec.ts`](../tests/optional_authorization_callbacks.spec.ts), [`tests/identity.spec.ts`](../tests/identity.spec.ts)
 
@@ -16,7 +16,7 @@ As an operation caller, I want request deduplication to check current access bef
 - `parseAuthorization` and `authorizeExecute` apply only to a fresh reservation; they are not rerun during replay.
 - Another actor using the same client IDs is in a separate namespace and learns nothing about the first actor’s result.
 
-- The optional replay callback receives the current operation context and a separate parsed copy of the stored result. Mutating that copy does not change the result returned to the caller. When the callback is omitted, successful current access suffices. The opaque fresh authorisation is never read on the replay branch. See [optional authorisation callback combinations](../tests/optional_authorization_callbacks.spec.ts) and the [replay branch](../src/receipts.ts#L662).
+- The optional replay callback receives the current operation context and a separate parsed copy of the stored result. Mutating that copy does not change the result returned to the caller. When the callback is omitted, successful current access suffices. The opaque fresh authorisation is never read on the replay branch. See [optional authorisation callback combinations](../tests/optional_authorization_callbacks.spec.ts) and the [replay branch](../src/receipts.ts#L580).
 
 ## User flow
 
@@ -66,4 +66,4 @@ flowchart TD
     T -->|Success on executeIn| P["Return provisional outcome to host transaction owner"]
 ```
 
-**Code references:** [fresh operation flow](US-GUARD-01-execute-command.md#code-flow), [authorisation callback order](../README.md#use), [replay branch](../src/receipts.ts#L662), [namespace construction](../src/receipts.ts#L557), [refusal rollback](../src/receipts.ts#L582)
+**Code references:** [fresh operation flow](US-GUARD-01-execute-command.md#code-flow), [authorisation callback order](../README.md#usage), [replay branch](../src/receipts.ts#L580), [namespace construction](../src/receipts.ts#L461), [refusal rollback](../src/receipts.ts#L480)

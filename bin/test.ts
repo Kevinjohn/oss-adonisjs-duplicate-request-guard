@@ -1,10 +1,12 @@
+import { expectTypeOf } from '@japa/expect-type'
+import { fileSystem } from '@japa/file-system'
 import { assert } from '@japa/assert'
 import { processCLIArgs, configure, run } from '@japa/runner'
 
 processCLIArgs(process.argv.slice(2))
 configure({
   files: ['tests/**/*.spec.ts'],
-  plugins: [assert()],
+  plugins: [assert(), expectTypeOf(), fileSystem()],
   timeout: 10_000,
   // Japa exits 0 when its filters select nothing; a gate that ran no tests checked nothing.
   teardown: [

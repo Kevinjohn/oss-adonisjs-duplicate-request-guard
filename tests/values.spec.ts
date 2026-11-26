@@ -1,5 +1,5 @@
 import { test } from '@japa/runner'
-import { execute, RECEIPTS_TABLE } from '../index.js'
+import { requestDeduplicator, RECEIPTS_TABLE } from '../index.ts'
 import {
   addProof,
   createDatabase,
@@ -7,7 +7,7 @@ import {
   makeOperationInput,
   makeNoteOperation,
   listReceipts,
-} from './helpers.js'
+} from './helpers.ts'
 
 class Point {
   constructor(
@@ -32,17 +32,20 @@ test.group('only plain JSON data is accepted', () => {
       const op = { ...operation, work: () => bad as never }
       await assert.rejects(
         () =>
-          execute(client, op, { ...makeOperationInput(1), authorization: { proofToken: 'p1' } }),
+          requestDeduplicator.execute(client, op, {
+            ...makeOperationInput(1),
+            authorization: { proofToken: 'p1' },
+          }),
         errors.E_INVALID_COMMAND_RESULT
       )
     }
     assert.lengthOf(await listReceipts(client), 0)
-    const ok = await execute(client, operation, {
+    const ok = await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     assert.isFalse(ok.replayed)
-    const replay = await execute(client, operation, makeOperationInput(1))
+    const replay = await requestDeduplicator.execute(client, operation, makeOperationInput(1))
     assert.deepEqual(replay.result, ok.result)
   })
 
@@ -59,7 +62,10 @@ test.group('only plain JSON data is accepted', () => {
       const op = { ...operation, work: () => bad as never }
       await assert.rejects(
         () =>
-          execute(client, op, { ...makeOperationInput(1), authorization: { proofToken: 'p1' } }),
+          requestDeduplicator.execute(client, op, {
+            ...makeOperationInput(1),
+            authorization: { proofToken: 'p1' },
+          }),
         errors.E_INVALID_COMMAND_RESULT
       )
     }
@@ -91,10 +97,12 @@ test.group('only plain JSON data is accepted', () => {
     const accepted: string[] = []
     for (const [name, value] of bad) {
       const op = { ...operation, work: () => value as never }
-      const error = await execute(client, op, {
-        ...makeOperationInput(1),
-        authorization: { proofToken: 'p1' },
-      }).catch((e) => e)
+      const error = await requestDeduplicator
+        .execute(client, op, {
+          ...makeOperationInput(1),
+          authorization: { proofToken: 'p1' },
+        })
+        .catch((e) => e)
       if (!(error instanceof errors.E_INVALID_COMMAND_RESULT)) accepted.push(name)
     }
     assert.deepEqual(accepted, [])
@@ -107,7 +115,7 @@ test.group('only plain JSON data is accepted', () => {
     const { operation, calls } = makeNoteOperation()
     const payload = Object.defineProperty({ body: 'x' }, 'n', { get: () => 1, enumerable: true })
     await assert.rejects(
-      () => execute(client, operation, makeOperationInput(1, { payload })),
+      () => requestDeduplicator.execute(client, operation, makeOperationInput(1, { payload })),
       errors.E_INVALID_COMMAND_VALUE
     )
     assert.equal(calls.access, 0)
@@ -120,23 +128,21 @@ test.group('only plain JSON data is accepted', () => {
     const payload = Object.freeze(JSON.parse('{"body":"x","__proto__":{"k":[1,2]}}'))
     const result = Object.freeze({ noteId: 7, list: Object.freeze([1, { a: 2 }]) })
     const op = { ...operation, work: () => result }
-    const fresh = await execute(client, op, {
+    const fresh = await requestDeduplicator.execute(client, op, {
       ...makeOperationInput(1, { payload }),
       authorization: { proofToken: 'p1' },
     })
     assert.isFalse(fresh.replayed)
-    const replay = await execute(
+    const replay = await requestDeduplicator.execute(
       client,
       op,
       makeOperationInput(1, { payload: JSON.parse(JSON.stringify(payload)) })
     )
     assert.isTrue(replay.replayed)
     assert.deepEqual(replay.result, { noteId: 7, list: [1, { a: 2 }] })
-    const conflict = await execute(
-      client,
-      op,
-      makeOperationInput(1, { payload: { body: 'x' } })
-    ).catch((e) => e)
+    const conflict = await requestDeduplicator
+      .execute(client, op, makeOperationInput(1, { payload: { body: 'x' } }))
+      .catch((e) => e)
     assert.instanceOf(conflict, errors.E_DUPLICATE_REQUEST_CONFLICT)
   })
 
@@ -144,11 +150,13 @@ test.group('only plain JSON data is accepted', () => {
     const { client } = await createDatabase()
     const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
-    const error = await execute(
-      client,
-      { ...operation, work: () => undefined as never },
-      { ...makeOperationInput(1), authorization: { proofToken: 'p1' } }
-    ).catch((e) => e)
+    const error = await requestDeduplicator
+      .execute(
+        client,
+        { ...operation, work: () => undefined as never },
+        { ...makeOperationInput(1), authorization: { proofToken: 'p1' } }
+      )
+      .catch((e) => e)
     assert.instanceOf(error, errors.E_INVALID_COMMAND_RESULT)
     assert.equal(error.status, 500)
     assert.equal(error.code, 'E_INVALID_COMMAND_RESULT')
@@ -177,11 +185,9 @@ test.group('only plain JSON data is accepted', () => {
     }) => {
       const { client } = await createDatabase()
       const { operation, calls } = makeNoteOperation()
-      const error = await execute(
-        client,
-        operation,
-        makeOperationInput(1, { payload: { body: 'x', extra: value } })
-      ).catch((e) => e)
+      const error = await requestDeduplicator
+        .execute(client, operation, makeOperationInput(1, { payload: { body: 'x', extra: value } }))
+        .catch((e) => e)
       assert.instanceOf(error, errors.E_INVALID_COMMAND_VALUE)
       assert.equal(error.status, 400)
       assert.equal(calls.work, 0)
@@ -193,13 +199,18 @@ test.group('only plain JSON data is accepted', () => {
     const { client } = await createDatabase()
     const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
-    await execute(client, operation, {
+    await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1, { payload: { body: 'x', extra: null } }),
       authorization: { proofToken: 'p1' },
     })
     for (const extra of [{}, [], 0, '', false, 'null']) {
       await assert.rejects(
-        () => execute(client, operation, makeOperationInput(1, { payload: { body: 'x', extra } })),
+        () =>
+          requestDeduplicator.execute(
+            client,
+            operation,
+            makeOperationInput(1, { payload: { body: 'x', extra } })
+          ),
         errors.E_DUPLICATE_REQUEST_CONFLICT
       )
     }
@@ -209,11 +220,11 @@ test.group('only plain JSON data is accepted', () => {
     const { client } = await createDatabase()
     const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
-    await execute(client, operation, {
+    await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1, { payload: { body: 'x', meta: { a: 1, b: 2 } } }),
       authorization: { proofToken: 'p1' },
     })
-    const replay = await execute(
+    const replay = await requestDeduplicator.execute(
       client,
       operation,
       makeOperationInput(1, { payload: { meta: { b: 2, a: 1 }, body: 'x' } })
@@ -231,12 +242,13 @@ test.group('schema and value edges', () => {
     // The phase-3 stub: command_id unique across every actor.
     await client.schema.alterTable(RECEIPTS_TABLE, (table) => table.unique(['command_id']))
     await addProof(client, 'p1')
-    await execute(client, operation, {
+    await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     await assert.rejects(
-      () => execute(client, operation, makeOperationInput(1, { actorId: 'bob' })),
+      () =>
+        requestDeduplicator.execute(client, operation, makeOperationInput(1, { actorId: 'bob' })),
       errors.E_RECEIPT_SCHEMA
     )
   })
@@ -245,11 +257,11 @@ test.group('schema and value edges', () => {
     const { client } = await createDatabase()
     const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
-    await execute(client, operation, {
+    await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1, { payload: { body: 'x', n: -0 } }),
       authorization: { proofToken: 'p1' },
     })
-    const replay = await execute(
+    const replay = await requestDeduplicator.execute(
       client,
       operation,
       makeOperationInput(1, { payload: { body: 'x', n: 0 } })
@@ -265,11 +277,11 @@ test.group('schema and value edges', () => {
     await addProof(client, 'p1')
     const shared = { k: 1 }
     const bare = Object.assign(Object.create(null) as object, { k: 1 })
-    await execute(client, operation, {
+    await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1, { payload: { body: 'x', a: shared, b: shared, c: bare } }),
       authorization: { proofToken: 'p1' },
     })
-    const replay = await execute(
+    const replay = await requestDeduplicator.execute(
       client,
       operation,
       makeOperationInput(1, { payload: { body: 'x', a: { k: 1 }, b: { k: 1 }, c: { k: 1 } } })
@@ -282,7 +294,7 @@ test.group('schema and value edges', () => {
     const { operation, calls } = makeNoteOperation()
     await assert.rejects(
       () =>
-        execute(
+        requestDeduplicator.execute(
           client,
           operation,
           makeOperationInput(1, { actorId: 'mallory', payload: { n: Number.NaN } })

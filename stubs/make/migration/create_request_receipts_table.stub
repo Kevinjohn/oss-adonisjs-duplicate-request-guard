@@ -1,8 +1,8 @@
-{{{ exports({ to: migration.destination }) }}}
+{{{ exports({ to: app.migrationsPath(migration.filename) }) }}}
 import { BaseSchema } from '@adonisjs/lucid/schema'
 
 /**
- * Receipts for @kevinjohn/adonisjs-duplicate-request-guard. The two unique indexes arbitrate reservations;
+ * Receipts for @kevinjohn/adonisjs-request-deduplication. The two unique indexes arbitrate reservations;
  * do not drop them. The operation column holds the JSON tuple [operation name, actor id], so command ids and
  * request keys are scoped to one actor's operation.
  */

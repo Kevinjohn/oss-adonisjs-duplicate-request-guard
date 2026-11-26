@@ -1,6 +1,6 @@
 import { test } from '@japa/runner'
 import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
-import { assertSupportedConnection, execute, executeIn } from '../index.js'
+import { requestDeduplicator } from '../index.ts'
 import {
   addProof,
   makeAuthorizedOperationInput,
@@ -9,7 +9,7 @@ import {
   makeNamedOperation,
   makeNoteOperation,
   listReceipts,
-} from './helpers.js'
+} from './helpers.ts'
 
 /** A statement that makes SQLite roll back the whole transaction, not just the statement. */
 const endTransaction = (trx: TransactionClientContract) =>
@@ -33,14 +33,14 @@ test.group('a transaction SQLite already ended runs no further operation', () =>
     hooks.afterWork = ({ trx }) => endTransaction(trx)
     const trx = await client.transaction()
     try {
-      const first = await executeIn(trx, operation, makeAuthorizedOperationInput(1)).catch(
-        readOutcomeCode
-      )
+      const first = await requestDeduplicator
+        .executeIn(trx, operation, makeAuthorizedOperationInput(1))
+        .catch(readOutcomeCode)
       assert.equal(first, 'SQLITE_CONSTRAINT_PRIMARYKEY')
       hooks.afterWork = undefined
-      const second = await executeIn(trx, operation, makeAuthorizedOperationInput(2)).catch(
-        readOutcomeCode
-      )
+      const second = await requestDeduplicator
+        .executeIn(trx, operation, makeAuthorizedOperationInput(2))
+        .catch(readOutcomeCode)
       assert.equal(second, 'E_TRANSACTION_LOST')
     } finally {
       await trx.rollback().catch(() => null)
@@ -57,15 +57,17 @@ test.group('a transaction SQLite already ended runs no further operation', () =>
     const trx = await client.transaction()
     try {
       await endTransaction(trx).catch(() => null)
-      const outcome = await executeIn(trx, operation, makeAuthorizedOperationInput(1)).catch(
-        readOutcomeCode
-      )
+      const outcome = await requestDeduplicator
+        .executeIn(trx, operation, makeAuthorizedOperationInput(1))
+        .catch(readOutcomeCode)
       assert.equal(outcome, 'E_TRANSACTION_LOST')
       // Refused for good: a host savepoint makes the driver report a transaction again, and
       // releasing an operation's savepoint inside it would still commit.
       await trx.rawQuery('SAVEPOINT host')
       assert.equal(
-        await executeIn(trx, operation, makeAuthorizedOperationInput(1)).catch(readOutcomeCode),
+        await requestDeduplicator
+          .executeIn(trx, operation, makeAuthorizedOperationInput(1))
+          .catch(readOutcomeCode),
         'E_TRANSACTION_LOST'
       )
     } finally {
@@ -82,13 +84,15 @@ test.group('a transaction SQLite already ended runs no further operation', () =>
     const child = makeNamedOperation('notes.child')
     child.hooks.afterWork = ({ trx }) => endTransaction(trx)
     parent.hooks.afterWork = async ({ trx }) => {
-      await executeIn(trx, child.operation, makeAuthorizedOperationInput(2)).catch(() => null)
+      await requestDeduplicator
+        .executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
+        .catch(() => null)
     }
     const trx = await client.transaction()
     try {
-      const outcome = await executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)).catch(
-        readOutcomeCode
-      )
+      const outcome = await requestDeduplicator
+        .executeIn(trx, parent.operation, makeAuthorizedOperationInput(1))
+        .catch(readOutcomeCode)
       assert.equal(outcome, 'E_TRANSACTION_LOST')
     } finally {
       await trx.rollback().catch(() => null)
@@ -105,12 +109,14 @@ test.group('a lost transaction is lost for every client on its connection', () =
     }) => {
       const client = await prepareLostTransactionFixture()
       const { operation, hooks } = makeNoteOperation()
-      assertSupportedConnection(client)
+      requestDeduplicator.assertSupportedConnection(client)
       const trx = await client.transaction()
       try {
         if (loser === 'an operation') {
           hooks.afterWork = (context) => endTransaction(context.trx)
-          await executeIn(trx, operation, makeAuthorizedOperationInput(1)).catch(() => null)
+          await requestDeduplicator
+            .executeIn(trx, operation, makeAuthorizedOperationInput(1))
+            .catch(() => null)
           hooks.afterWork = undefined
         } else {
           // No operation sees this: the watcher armed by the boot-time check does.
@@ -118,7 +124,9 @@ test.group('a lost transaction is lost for every client on its connection', () =
         }
         // The child's savepoint reopens a transaction, so the driver reports one again.
         const outcome = await trx
-          .transaction((child) => executeIn(child, operation, makeAuthorizedOperationInput(2)))
+          .transaction((child) =>
+            requestDeduplicator.executeIn(child, operation, makeAuthorizedOperationInput(2))
+          )
           .catch(readOutcomeCode)
         assert.equal(outcome, 'E_TRANSACTION_LOST')
       } finally {
@@ -137,10 +145,12 @@ test.group('a lost transaction is lost for every client on its connection', () =
     const trx = await client.transaction()
     try {
       // The first deduplicated call on this connection happens with the transaction already open.
-      await executeIn(trx, operation, makeAuthorizedOperationInput(1))
+      await requestDeduplicator.executeIn(trx, operation, makeAuthorizedOperationInput(1))
       await endTransaction(trx).catch(() => null)
       const outcome = await trx
-        .transaction((child) => executeIn(child, operation, makeAuthorizedOperationInput(2)))
+        .transaction((child) =>
+          requestDeduplicator.executeIn(child, operation, makeAuthorizedOperationInput(2))
+        )
         .catch(readOutcomeCode)
       assert.equal(outcome, 'E_TRANSACTION_LOST')
     } finally {
@@ -163,18 +173,20 @@ test.group('a lost transaction is lost for every client on its connection', () =
     parent.hooks.afterWork = async ({ trx }) => {
       await trx
         .transaction((nested) =>
-          executeIn(nested, child.operation, makeAuthorizedOperationInput(2))
+          requestDeduplicator.executeIn(nested, child.operation, makeAuthorizedOperationInput(2))
         )
         .catch(() => null)
       laterCode = await trx
         .transaction((nested) =>
-          executeIn(nested, later.operation, makeAuthorizedOperationInput(3))
+          requestDeduplicator.executeIn(nested, later.operation, makeAuthorizedOperationInput(3))
         )
         .then(() => 'fulfilled', readOutcomeCode)
     }
     const trx = await client.transaction()
     try {
-      await executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)).catch(() => null)
+      await requestDeduplicator
+        .executeIn(trx, parent.operation, makeAuthorizedOperationInput(1))
+        .catch(() => null)
     } finally {
       await trx.rollback().catch(() => null)
     }
@@ -190,15 +202,19 @@ test.group('a lost transaction is lost for every client on its connection', () =
     const { operation, hooks } = makeNoteOperation()
     hooks.afterWork = ({ trx }) => endTransaction(trx)
 
-    const failureCode = await execute(client, operation, makeAuthorizedOperationInput(1)).catch(
-      readOutcomeCode
-    )
+    const failureCode = await requestDeduplicator
+      .execute(client, operation, makeAuthorizedOperationInput(1))
+      .catch(readOutcomeCode)
     assert.equal(failureCode, 'SQLITE_CONSTRAINT_PRIMARYKEY')
     assert.lengthOf(await listReceipts(client), 0)
     assert.equal(await countRows(client, 'notes'), 1)
 
     hooks.afterWork = undefined
-    const outcome = await execute(client, operation, makeAuthorizedOperationInput(1))
+    const outcome = await requestDeduplicator.execute(
+      client,
+      operation,
+      makeAuthorizedOperationInput(1)
+    )
     assert.isFalse(outcome.replayed)
     assert.lengthOf(await listReceipts(client), 1)
     assert.equal(await countRows(client, 'notes'), 2)
@@ -209,12 +225,14 @@ test.group('a lost transaction is lost for every client on its connection', () =
     const { operation, hooks } = makeNoteOperation()
     hooks.afterWork = ({ trx }) => endTransaction(trx)
     const lost = await client.transaction()
-    await executeIn(lost, operation, makeAuthorizedOperationInput(1)).catch(() => null)
+    await requestDeduplicator
+      .executeIn(lost, operation, makeAuthorizedOperationInput(1))
+      .catch(() => null)
     await lost.rollback().catch(() => null)
     hooks.afterWork = undefined
     for (const sequenceNumber of [1, 2]) {
       const outcome = await client.transaction((trx) =>
-        executeIn(trx, operation, makeAuthorizedOperationInput(sequenceNumber))
+        requestDeduplicator.executeIn(trx, operation, makeAuthorizedOperationInput(sequenceNumber))
       )
       assert.isFalse(outcome.replayed)
     }
@@ -231,11 +249,13 @@ test.group('only the transaction that was lost is refused', () => {
     const done = await client.transaction()
     await done.commit()
     assert.equal(
-      await executeIn(done, operation, makeAuthorizedOperationInput(1)).catch(readOutcomeCode),
+      await requestDeduplicator
+        .executeIn(done, operation, makeAuthorizedOperationInput(1))
+        .catch(readOutcomeCode),
       'E_TRANSACTION_LOST'
     )
     const outcome = await client.transaction((trx) =>
-      executeIn(trx, operation, makeAuthorizedOperationInput(1))
+      requestDeduplicator.executeIn(trx, operation, makeAuthorizedOperationInput(1))
     )
     assert.isFalse(outcome.replayed)
   })
@@ -248,19 +268,23 @@ test.group('only the transaction that was lost is refused', () => {
     }) => {
       const client = await prepareLostTransactionFixture()
       const { operation } = makeNoteOperation()
-      assertSupportedConnection(client)
+      requestDeduplicator.assertSupportedConnection(client)
       const done = await client.transaction()
       const waiting = client.transaction()
       const committed = done.commit()
       for (let tick = 0; tick < ticks; tick++) await Promise.resolve()
-      const late = executeIn(done, operation, makeAuthorizedOperationInput(1)).catch(
-        readOutcomeCode
-      )
+      const late = requestDeduplicator
+        .executeIn(done, operation, makeAuthorizedOperationInput(1))
+        .catch(readOutcomeCode)
       await committed
       const next = await waiting
       try {
         await late
-        const outcome = await executeIn(next, operation, makeAuthorizedOperationInput(2))
+        const outcome = await requestDeduplicator.executeIn(
+          next,
+          operation,
+          makeAuthorizedOperationInput(2)
+        )
         assert.isFalse(outcome.replayed)
         await next.commit()
       } finally {
@@ -272,13 +296,18 @@ test.group('only the transaction that was lost is refused', () => {
   test('statements knex runs before BEGIN do not count as a loss', async ({ assert }) => {
     const client = await prepareLostTransactionFixture()
     const { operation } = makeNoteOperation()
-    assertSupportedConnection(client)
+    requestDeduplicator.assertSupportedConnection(client)
     // knex reads and restores PRAGMA foreign_keys around the transaction, outside it.
     const options = { enforceForeignCheck: true } as unknown as { isolationLevel?: never }
     // Twice: the second transaction's PRAGMA follows statements the first ran inside its own.
     for (const sequenceNumber of [1, 2]) {
       const outcome = await client.transaction(
-        (trx) => executeIn(trx, operation, makeAuthorizedOperationInput(sequenceNumber)),
+        (trx) =>
+          requestDeduplicator.executeIn(
+            trx,
+            operation,
+            makeAuthorizedOperationInput(sequenceNumber)
+          ),
         options
       )
       assert.isFalse(outcome.replayed)
@@ -289,12 +318,14 @@ test.group('only the transaction that was lost is refused', () => {
   test('a raw COMMIT from the host is a loss too', async ({ assert }) => {
     const client = await prepareLostTransactionFixture()
     const { operation } = makeNoteOperation()
-    assertSupportedConnection(client)
+    requestDeduplicator.assertSupportedConnection(client)
     const trx = await client.transaction()
     try {
       await trx.rawQuery('COMMIT')
       const outcome = await trx
-        .transaction((child) => executeIn(child, operation, makeAuthorizedOperationInput(1)))
+        .transaction((child) =>
+          requestDeduplicator.executeIn(child, operation, makeAuthorizedOperationInput(1))
+        )
         .catch(readOutcomeCode)
       assert.equal(outcome, 'E_TRANSACTION_LOST')
     } finally {
@@ -308,11 +339,11 @@ test.group('ordinary query failures do not lose a transaction', () => {
   test('a failed host query that leaves the transaction open is no loss', async ({ assert }) => {
     const client = await prepareLostTransactionFixture()
     const { operation } = makeNoteOperation()
-    assertSupportedConnection(client)
+    requestDeduplicator.assertSupportedConnection(client)
     await client.transaction(async (trx) => {
       await trx.rawQuery('SELECT missing FROM nowhere').catch(() => null)
       const outcome = await trx.transaction((child) =>
-        executeIn(child, operation, makeAuthorizedOperationInput(1))
+        requestDeduplicator.executeIn(child, operation, makeAuthorizedOperationInput(1))
       )
       assert.isFalse(outcome.replayed)
     })
@@ -322,10 +353,10 @@ test.group('ordinary query failures do not lose a transaction', () => {
   test('a failed query outside any transaction marks nothing', async ({ assert }) => {
     const client = await prepareLostTransactionFixture()
     const { operation } = makeNoteOperation()
-    assertSupportedConnection(client)
+    requestDeduplicator.assertSupportedConnection(client)
     await client.rawQuery('SELECT missing FROM nowhere').catch(() => null)
     const outcome = await client.transaction((trx) =>
-      executeIn(trx, operation, makeAuthorizedOperationInput(1))
+      requestDeduplicator.executeIn(trx, operation, makeAuthorizedOperationInput(1))
     )
     assert.isFalse(outcome.replayed)
   })
@@ -346,13 +377,15 @@ test.group('annotating the error never skips the rollback', () => {
     const hostile = new Hostile('from work')
     let pending: Promise<unknown> = Promise.resolve()
     hooks.afterWork = ({ trx }) => {
-      pending = executeIn(trx, operation, { ...makeAuthorizedOperationInput(2) })
+      pending = requestDeduplicator.executeIn(trx, operation, {
+        ...makeAuthorizedOperationInput(2),
+      })
       throw hostile
     }
     await client.transaction(async (trx) => {
-      const caught = await executeIn(trx, operation, makeAuthorizedOperationInput(1)).catch(
-        (error: unknown) => error
-      )
+      const caught = await requestDeduplicator
+        .executeIn(trx, operation, makeAuthorizedOperationInput(1))
+        .catch((error: unknown) => error)
       assert.strictEqual(caught, hostile)
       await trx.table('notes').insert({ scope_id: 's1', body: 'host write' })
     })

@@ -4,19 +4,19 @@ As an operation caller, I want to reuse the same operation identity on retries s
 
 **Status:** Current when using a supported better-sqlite3 connection and the required receipts migration.
 **Access:** Host authenticates the actor, establishes the scope, and authorises access. The operation name and actor define the receipt namespace. Replay requires a matching operation identity, scope, and payload.
-**Entry:** Host action calls `execute(client, operation, input)`; client supplies the operation identity as `commandId` and `requestKey`.
-**Documentation:** [README use and contracts](../README.md#use)
+**Entry:** Host action calls `requestDeduplicator.execute(client, operation, input)`; client supplies the operation identity as `commandId` and `requestKey`.
+**Documentation:** [README use and contracts](../README.md#usage)
 **Source:** [`execute` and reservation pipeline](../src/receipts.ts)
 **Coverage:** [`tests/execute.spec.ts`](../tests/execute.spec.ts), [`tests/values.spec.ts`](../tests/values.spec.ts)
 
 ## Acceptance criteria
 
-| Input                                     | API parameter                | Required/default/conditions                                                                                                                                                                     |
-| ----------------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `actorId`, `scopeId`                      | String-typed identity values | Required by `ExecuteInput`; host derives identity and scope from trusted authentication and authorisation. No additional nonempty-string runtime check is promised.                             |
-| `command.commandId`, `command.requestKey` | Operation identity           | Both values are required and must be well-formed Unicode strings. Preserve the command ID and request key together on retries. The operation name and actor define the receipt namespace.       |
-| `payload`                                 | Operation payload            | Required JSON value; scope and payload are hashed together. Objects must be plain; arrays and finite numbers are allowed.                                                                       |
-| `authorization`                           | Opaque optional input        | Parsed only for fresh reservations when `parseAuthorization` exists; omitted parser supplies `undefined`. A non-optional `Authorization` type requires a parser in the public `Operation` type. |
+| Input                                                     | API parameter                | Required/default/conditions                                                                                                                                                                     |
+| --------------------------------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `actorId`, `scopeId`                                      | String-typed identity values | Required by `ExecuteInput`; host derives identity and scope from trusted authentication and authorisation. No additional nonempty-string runtime check is promised.                             |
+| `requestIdentity.commandId`, `requestIdentity.requestKey` | Operation identity           | Both values are required and must be well-formed Unicode strings. Preserve the command ID and request key together on retries. The operation name and actor define the receipt namespace.       |
+| `payload`                                                 | Operation payload            | Required JSON value; scope and payload are hashed together. Objects must be plain; arrays and finite numbers are allowed.                                                                       |
+| `authorization`                                           | Opaque optional input        | Parsed only for fresh reservations when `parseAuthorization` exists; omitted parser supplies `undefined`. A non-optional `Authorization` type requires a parser in the public `Operation` type. |
 
 - The package first acquires SQLite's writer lock, then validates the payload and scope JSON and the operation identity before any authorisation callback. `authorizeAccess` is the first authorisation callback and runs before reservation. Invalid payloads do not commit a receipt.
 - `Operation` requires `name`, `authorizeAccess`, and `work`; omitted execute/replay authorisation callbacks allow their respective path. Use only the provided `trx` for database changes.
@@ -99,4 +99,4 @@ flowchart TD
     Y --> T
 ```
 
-**Code references:** [API](../index.ts), [execute](../src/receipts.ts#L728), [Operation](../src/types.ts#L41)
+**Code references:** [API](../index.ts), [execute](../src/receipts.ts#L743), [Operation](../src/types.ts#L41)

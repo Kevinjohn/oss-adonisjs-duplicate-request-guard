@@ -1,5 +1,5 @@
 {
-  "name": "@kevinjohn/adonisjs-duplicate-request-guard",
+  "name": "@kevinjohn/adonisjs-request-deduplication",
   "description": "Run a repeated request once and return its first result, inside your Lucid transaction (AdonisJS 7)",
   "version": "0.3.1",
   "engines": {
@@ -9,8 +9,7 @@
   "files": [
     "build",
     "!build/bin",
-    "!build/tests",
-    "CHANGELOG.md"
+    "!build/tests"
   ],
   "main": "./build/index.js",
   "exports": {
@@ -27,8 +26,9 @@
     "test": "c8 pnpm quick:test",
     "check:changed": "node --import=@poppinss/ts-exec --enable-source-maps bin/check_changed.ts",
     "precompile": "pnpm lint",
-    "compile": "tsdown && tsc --emitDeclarationOnly --declaration",
-    "build": "pnpm compile"
+    "compile": "tsdown && tsc --emitDeclarationOnly --declaration && copyfiles --up=1 \"stubs/**/*.stub\" build/stubs",
+    "build": "pnpm compile",
+    "release": "bash bin/release_check.sh"
   },
   "c8": {
     "reporter": [
@@ -79,6 +79,8 @@
     "@adonisjs/session": "^8.1.0",
     "@adonisjs/tsconfig": "^2.0.0",
     "@japa/assert": "^4.2.0",
+    "@japa/expect-type": "^2.0.4",
+    "@japa/file-system": "^3.0.0",
     "@japa/runner": "^5.3.0",
     "@kevinjohn/adonisjs-account-kit": "https://github.com/Kevinjohn/oss-adonisjs-account-kit/releases/download/v0.8.0/kevinjohn-adonisjs-account-kit-0.8.0.tgz",
     "@poppinss/ts-exec": "^1.5.1",
@@ -87,6 +89,7 @@
     "@vinejs/vine": "^4.4.0",
     "better-sqlite3": "^13.0.0",
     "c8": "^12.0.0",
+    "copyfiles": "^2.4.1",
     "eslint": "^10.14.0",
     "luxon": "^3.0.0",
     "pg": "^8.0.0",
@@ -95,6 +98,7 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
+    "@adonisjs/assembler": "^8.6.0",
     "@adonisjs/core": "^7.0.0",
     "@adonisjs/lucid": "^22.0.0"
   },
@@ -102,7 +106,8 @@
     "entry": [
       "./index.ts",
       "./configure.ts",
-      "./src/types.ts"
+      "./src/types.ts",
+      "./stubs/main.ts"
     ],
     "outDir": "./build",
     "clean": true,
@@ -112,14 +117,13 @@
     "dts": false,
     "treeshake": false,
     "sourcemaps": false,
-    "target": "esnext",
-    "copy": [
-      {
-        "from": "stubs",
-        "to": "build"
-      }
-    ]
+    "target": "esnext"
   },
   "prettier": "@adonisjs/prettier-config",
-  "packageManager": "pnpm@11.23.0"
+  "packageManager": "pnpm@11.23.0",
+  "peerDependenciesMeta": {
+    "@adonisjs/assembler": {
+      "optional": true
+    }
+  }
 }

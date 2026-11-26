@@ -11,7 +11,7 @@ import {
   captureChildOutput,
   waitForFile,
   waitForPid,
-} from './child_process.js'
+} from './child_process.ts'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
@@ -69,6 +69,10 @@ async function makeCheckProcessFixture(
   await writeFile(path.join(root, 'bin/check_changed.ts'), await readFile(runnerPath))
   await writeFile(path.join(root, 'bin/check_changed_plan.ts'), await readFile(plannerPath))
   await writeFile(path.join(root, 'package.json'), '{"type":"module"}\n')
+  await writeFile(
+    path.join(root, 'tsconfig.json'),
+    JSON.stringify({ compilerOptions: { rewriteRelativeImportExtensions: true } })
+  )
   await writeFile(path.join(root, 'README.md'), 'fixture baseline\n')
   await symlink(path.join(repoRoot, 'node_modules'), path.join(root, 'node_modules'), 'dir')
 
@@ -115,6 +119,7 @@ async function makeCheckProcessFixture(
   const environment: NodeJS.ProcessEnv = {
     ...process.env,
     PATH: `${bin}${path.delimiter}${supportBin}`,
+    TS_EXEC_PWD: root,
   }
   delete environment.CHECK_CHANGED_HANG
   if (options.command === 'hang') environment.CHECK_CHANGED_HANG = '1'

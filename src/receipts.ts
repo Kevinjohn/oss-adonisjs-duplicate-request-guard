@@ -1,3 +1,4 @@
+import { InvalidArgumentsException, RuntimeException } from '@adonisjs/core/exceptions'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
@@ -13,16 +14,13 @@ import {
   E_CONCURRENT_COMMAND,
   E_UNAWAITED_NESTED_COMMAND,
   E_TRANSACTION_LOST,
-  E_TRANSACTION_OWNER,
-  E_UNSAFE_SQLITE_POOL,
-  E_UNSUPPORTED_DIALECT,
-} from './errors.js'
-import type { ExecuteInput, Operation, OperationContext, Outcome, PruneOptions } from './types.js'
+} from './errors.ts'
+import type { ExecuteInput, Operation, OperationContext, Outcome, PruneOptions } from './types.ts'
 
 /** Table created by the published migration. */
 export const RECEIPTS_TABLE = 'request_receipts'
 
-/** The only dialect the package is tested on. Others are refused (see E_UNSUPPORTED_DIALECT). */
+/** The only dialect the package is tested on. Others are refused. */
 const SUPPORTED_DIALECT = 'better-sqlite3'
 
 /**
@@ -134,63 +132,6 @@ function resolveDatabasePath(filename: string) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     return join(realpathSync(dirname(resolve(filename))), basename(filename))
   }
-}
-
-/**
- * Refuses connections the package cannot keep safe: any dialect but better-sqlite3, a pool above
- * one connection, or a second named connection on a SQLite file another connection already uses.
- * better-sqlite3 waits for locks synchronously, so a second in-process writer stalls the event loop
- * while the transaction holding the lock cannot commit.
- *
- * @example
- * ```ts
- * import { assertSupportedConnection } from '@kevinjohn/adonisjs-duplicate-request-guard'
- * import db from '@adonisjs/lucid/services/db'
- *
- * assertSupportedConnection(db.connection())
- * ```
- */
-export function assertSupportedConnection(client: QueryClientContract | TransactionClientContract) {
-  if (client.dialect.name !== SUPPORTED_DIALECT) {
-    throw new E_UNSUPPORTED_DIALECT(client.connectionName, client.dialect.name)
-  }
-  const config = (
-    client.getWriteClient() as unknown as {
-      client: { config: { pool?: { max?: number }; connection?: { filename?: string } } }
-    }
-  ).client.config
-  const maximumConnectionCount = config.pool?.max ?? 1
-  if (maximumConnectionCount !== 1) {
-    throw new E_UNSAFE_SQLITE_POOL(
-      `SQLite connection "${client.connectionName}" allows ${maximumConnectionCount} pooled connections; guarded commands require pool.max = 1`
-    )
-  }
-  watchConnection(client)
-  // As better-sqlite3 reads it (lib/database.js): trimmed, and empty or :memory: is anonymous.
-  const filename = (config.connection?.filename ?? '').trim()
-  // Every anonymous connection is its own database.
-  if (filename === '' || filename === ':memory:') return
-  const file = resolveDatabasePath(filename)
-  // Query and transaction clients share the dialect, which holds the query client and its connection.
-  const connection = (client.dialect as unknown as { client: { connection: LucidConnection } })
-    .client.connection
-  const writers = writersByDatabasePath.get(file) ?? new Set<LucidConnection>()
-  // Fallback for a close that never emitted 'disconnect' (for example a listener removed by the host).
-  for (const writer of writers) {
-    if (writer.client === undefined) writers.delete(writer)
-  }
-  const other = [...writers].find((writer) => writer !== connection)
-  if (other) {
-    throw new E_UNSAFE_SQLITE_POOL(
-      `SQLite connections "${other.name}" and "${connection.name}" share ${file}; run guarded commands through one connection`
-    )
-  }
-  if (!writers.has(connection)) {
-    writers.add(connection)
-    // Lucid emits it once the connection's pool is destroyed (manager.close, closeAll, patch).
-    connection.once('disconnect', () => releaseWriter(file, connection))
-  }
-  writersByDatabasePath.set(file, writers)
 }
 
 /** The receipt to complete and the serialised result to store in it. */
@@ -433,55 +374,17 @@ function assertSettled(frame: Frame) {
     throw new E_UNAWAITED_NESTED_COMMAND()
 }
 
-/**
- * Runs one operation inside a transaction the host owns (for example Account Kit `withCurrent`).
- * Order: authorizeAccess, reserve, then either authorizeReplay (replay) or parseAuthorization,
- * authorizeExecute, work, complete (fresh). Everything after validation runs under a savepoint, so
- * a failure rolls back the pending row and the work even if the host swallows it and commits.
- * Await it before issuing any other query on `trx`.
- *
- * @example
- * ```ts
- * import { executeIn, type ExecuteInput } from '@kevinjohn/adonisjs-duplicate-request-guard'
- * import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
- * import { createNote } from '#operations/create_note'
- *
- * export async function createNoteInTransaction(
- *   trx: TransactionClientContract,
- *   input: ExecuteInput<{ body: string }>
- * ) {
- *   return executeIn(trx, createNote, input)
- * }
- * ```
- */
-export function executeIn<Payload, Authorization, Result>(
-  trx: TransactionClientContract,
-  operation: Operation<Payload, Authorization, Result>,
-  input: ExecuteInput<Payload>
-): Promise<Outcome<Result>> {
-  let claimed: Frame | undefined
-  const run = executeInTransaction({
-    trx,
-    operation,
-    admitInput: () => snapshotInput(input),
-    onClaimed: (frame) => {
-      claimed = frame
-    },
-  })
-  // The claim is synchronous. A nested operation's parent observes this promise only when it
-  // reports the operation as its own failure's cause; awaiting callers see the same rejection.
-  if (claimed?.parent) claimed.returned = run
-  return run
-}
-
 // Preserve the dispatch identity while leaving authorization lazy and the payload by reference.
 function snapshotInput<Payload>(input: ExecuteInput<Payload>): ExecuteInput<Payload> {
-  const { actorId, scopeId, payload, command } = input
+  const { actorId, scopeId, payload, requestIdentity } = input
   return {
     actorId,
     scopeId,
     payload,
-    command: { commandId: command?.commandId, requestKey: command?.requestKey },
+    requestIdentity: {
+      commandId: requestIdentity?.commandId,
+      requestKey: requestIdentity?.requestKey,
+    },
     get authorization() {
       return input.authorization
     },
@@ -504,9 +407,9 @@ async function executeInTransaction<Payload, Authorization, Result>({
   onClaimed,
 }: TransactionRunInput<Payload, Authorization, Result>): Promise<Outcome<Result>> {
   if (!trx.isTransaction) {
-    throw new E_TRANSACTION_OWNER('executeIn requires a transaction client')
+    throw new InvalidArgumentsException('executeIn requires a transaction client')
   }
-  assertSupportedConnection(trx)
+  requestDeduplicator.assertSupportedConnection(trx)
   const frame = claimOperationFrame(trx)
   onClaimed?.(frame)
   try {
@@ -553,7 +456,7 @@ async function runClaimed<Payload, Authorization, Result>({
       serializeCanonicalJson({ scopeId: input.scopeId, payload: input.payload }, refusePayload)
     )
     .digest('hex')
-  assertIdentity(input.command.commandId, input.command.requestKey)
+  assertIdentity(input.requestIdentity.commandId, input.requestIdentity.requestKey)
   // A JSON tuple cannot be confused across the operation/actor boundary.
   const namespace = JSON.stringify([operation.name, input.actorId])
 
@@ -650,9 +553,9 @@ async function reserveAndRun<Payload, Authorization, Result>({
     [
       randomUUID(),
       input.scopeId,
-      input.command.commandId,
+      input.requestIdentity.commandId,
       namespace,
-      input.command.requestKey,
+      input.requestIdentity.requestKey,
       payloadHash,
       writtenAt,
       writtenAt,
@@ -666,8 +569,8 @@ async function reserveAndRun<Payload, Authorization, Result>({
       .where('operation', namespace)
       .where((query) => {
         void query
-          .where('command_id', input.command.commandId)
-          .orWhere('request_key', input.command.requestKey)
+          .where('command_id', input.requestIdentity.commandId)
+          .orWhere('request_key', input.requestIdentity.requestKey)
       })
     // The insert lost to a unique index, yet no row in this namespace matches: the table still
     // has a unique index from an older stub (command_id across every actor).
@@ -675,8 +578,8 @@ async function reserveAndRun<Payload, Authorization, Result>({
     // Two matching rows always differ in command_id or request_key.
     const row = matchingReceipts[0]
     if (
-      row.command_id !== input.command.commandId ||
-      row.request_key !== input.command.requestKey ||
+      row.command_id !== input.requestIdentity.commandId ||
+      row.request_key !== input.requestIdentity.requestKey ||
       row.payload_hash !== payloadHash
     ) {
       throw new E_DUPLICATE_REQUEST_CONFLICT()
@@ -704,68 +607,180 @@ async function reserveAndRun<Payload, Authorization, Result>({
   internalHooks.onClosing?.()
   await completeReceipt(trx, {
     namespace,
-    commandId: input.command.commandId,
+    commandId: input.requestIdentity.commandId,
     serialized: serializeCanonicalJson(result, refuseResult),
   })
   return { replayed: false, result }
 }
 
 /**
- * Managed owner: opens and commits its own transaction, once. It does not retry. Do not call it
- * inside another transaction owner, and do not wrap it in a retrier.
+ * Executes deduplicated operations and coordinates their receipts and transaction state.
  *
  * @example
  * ```ts
- * import { execute, type ExecuteInput } from '@kevinjohn/adonisjs-duplicate-request-guard'
+ * import { requestDeduplicator } from '@kevinjohn/adonisjs-request-deduplication'
  * import db from '@adonisjs/lucid/services/db'
- * import { createNote } from '#operations/create_note'
  *
- * export async function submitNote(input: ExecuteInput<{ body: string }>) {
- *   return execute(db.connection(), createNote, input)
- * }
+ * requestDeduplicator.assertSupportedConnection(db.connection())
  * ```
  */
-export async function execute<Payload, Authorization, Result>(
-  client: QueryClientContract,
-  operation: Operation<Payload, Authorization, Result>,
-  input: ExecuteInput<Payload>
-): Promise<Outcome<Result>> {
-  if (client.isTransaction) {
-    throw new E_TRANSACTION_OWNER(
-      'execute owns its transaction; inside a host transaction use executeIn'
+class RequestDeduplicator {
+  /**
+   * Refuses connections the package cannot keep safe: any dialect but better-sqlite3, a pool above
+   * one connection, or a second named connection on a SQLite file another connection already uses.
+   * better-sqlite3 waits for locks synchronously, so a second in-process writer stalls the event loop
+   * while the transaction holding the lock cannot commit.
+   *
+   * @example
+   * ```ts
+   * import { requestDeduplicator } from '@kevinjohn/adonisjs-request-deduplication'
+   * import db from '@adonisjs/lucid/services/db'
+   *
+   * requestDeduplicator.assertSupportedConnection(db.connection())
+   * ```
+   */
+  assertSupportedConnection(client: QueryClientContract | TransactionClientContract) {
+    if (client.dialect.name !== SUPPORTED_DIALECT) {
+      throw new RuntimeException(
+        `Connection "${client.connectionName}" uses ${client.dialect.name}; request deduplication requires better-sqlite3`
+      )
+    }
+    const config = (
+      client.getWriteClient() as unknown as {
+        client: { config: { pool?: { max?: number }; connection?: { filename?: string } } }
+      }
+    ).client.config
+    const maximumConnectionCount = config.pool?.max ?? 1
+    if (maximumConnectionCount !== 1) {
+      throw new RuntimeException(
+        `SQLite connection "${client.connectionName}" allows ${maximumConnectionCount} pooled connections; guarded commands require pool.max = 1`
+      )
+    }
+    watchConnection(client)
+    // As better-sqlite3 reads it (lib/database.js): trimmed, and empty or :memory: is anonymous.
+    const filename = (config.connection?.filename ?? '').trim()
+    // Every anonymous connection is its own database.
+    if (filename === '' || filename === ':memory:') return
+    const file = resolveDatabasePath(filename)
+    // Query and transaction clients share the dialect, which holds the query client and its connection.
+    const connection = (client.dialect as unknown as { client: { connection: LucidConnection } })
+      .client.connection
+    const writers = writersByDatabasePath.get(file) ?? new Set<LucidConnection>()
+    // Fallback for a close that never emitted 'disconnect' (for example a listener removed by the host).
+    for (const writer of writers) {
+      if (writer.client === undefined) writers.delete(writer)
+    }
+    const other = [...writers].find((writer) => writer !== connection)
+    if (other) {
+      throw new RuntimeException(
+        `SQLite connections "${other.name}" and "${connection.name}" share ${file}; run guarded commands through one connection`
+      )
+    }
+    if (!writers.has(connection)) {
+      writers.add(connection)
+      // Lucid emits it once the connection's pool is destroyed (manager.close, closeAll, patch).
+      connection.once('disconnect', () => releaseWriter(file, connection))
+    }
+    writersByDatabasePath.set(file, writers)
+  }
+
+  /**
+   * Runs one operation inside a transaction the host owns (for example Account Kit `withCurrent`).
+   * Order: authorizeAccess, reserve, then either authorizeReplay (replay) or parseAuthorization,
+   * authorizeExecute, work, complete (fresh). Everything after validation runs under a savepoint, so
+   * a failure rolls back the pending row and the work even if the host swallows it and commits.
+   * Await it before issuing any other query on `trx`.
+   *
+   * @example
+   * ```ts
+   * import { requestDeduplicator, type ExecuteInput } from '@kevinjohn/adonisjs-request-deduplication'
+   * import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
+   * import { createNote } from '#operations/create_note'
+   *
+   * export async function createNoteInTransaction(
+   *   trx: TransactionClientContract,
+   *   input: ExecuteInput<{ body: string }>
+   * ) {
+   *   return requestDeduplicator.executeIn(trx, createNote, input)
+   * }
+   * ```
+   */
+  executeIn<Payload, Authorization, Result>(
+    trx: TransactionClientContract,
+    operation: Operation<Payload, Authorization, Result>,
+    input: ExecuteInput<Payload>
+  ): Promise<Outcome<Result>> {
+    let claimed: Frame | undefined
+    const run = executeInTransaction({
+      trx,
+      operation,
+      admitInput: () => snapshotInput(input),
+      onClaimed: (frame) => {
+        claimed = frame
+      },
+    })
+    // The claim is synchronous. A nested operation's parent observes this promise only when it
+    // reports the operation as its own failure's cause; awaiting callers see the same rejection.
+    if (claimed?.parent) claimed.returned = run
+    return run
+  }
+
+  /**
+   * Managed owner: opens and commits its own transaction, once. It does not retry. Do not call it
+   * inside another transaction owner, and do not wrap it in a retrier.
+   *
+   * @example
+   * ```ts
+   * import { requestDeduplicator, type ExecuteInput } from '@kevinjohn/adonisjs-request-deduplication'
+   * import db from '@adonisjs/lucid/services/db'
+   * import { createNote } from '#operations/create_note'
+   *
+   * export async function submitNote(input: ExecuteInput<{ body: string }>) {
+   *   return requestDeduplicator.execute(db.connection(), createNote, input)
+   * }
+   * ```
+   */
+  async execute<Payload, Authorization, Result>(
+    client: QueryClientContract,
+    operation: Operation<Payload, Authorization, Result>,
+    input: ExecuteInput<Payload>
+  ): Promise<Outcome<Result>> {
+    if (client.isTransaction) {
+      throw new InvalidArgumentsException(
+        'execute owns its transaction; inside a host transaction use executeIn'
+      )
+    }
+    this.assertSupportedConnection(client)
+    const admitted = snapshotInput(input)
+    return client.transaction((trx) =>
+      executeInTransaction({ trx, operation, admitInput: () => admitted })
     )
   }
-  assertSupportedConnection(client)
-  const admitted = snapshotInput(input)
-  return client.transaction((trx) =>
-    executeInTransaction({ trx, operation, admitInput: () => admitted })
-  )
+
+  /**
+   * Deletes completed receipts last updated strictly before `olderThan`. After pruning, the same
+   * identity runs as a fresh operation again, so keep receipts at least as long as clients may retry.
+   *
+   * @example
+   * ```ts
+   * import { requestDeduplicator } from '@kevinjohn/adonisjs-request-deduplication'
+   * import db from '@adonisjs/lucid/services/db'
+   *
+   * const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+   * await requestDeduplicator.pruneReceipts(db.connection(), { olderThan: sevenDaysAgo })
+   * ```
+   */
+  async pruneReceipts(client: QueryClientContract, options: PruneOptions): Promise<number> {
+    this.assertSupportedConnection(client)
+    // Throws for an invalid Date, before any query.
+    const cutoff = options.olderThan.toISOString()
+    const query = client.from(RECEIPTS_TABLE).where('state', 'completed')
+    // Stored timestamps have four-digit years. A year above 9999 is written "+YYYYYY", which sorts
+    // before them as text, yet every stored receipt is older. (A year before 0 sorts first and
+    // deletes nothing, which is also right.)
+    if (!cutoff.startsWith('+')) void query.where('updated_at', '<', cutoff)
+    return Number(await query.delete())
+  }
 }
 
-/**
- * Deletes completed receipts last updated strictly before `olderThan`. After pruning, the same
- * identity runs as a fresh operation again, so keep receipts at least as long as clients may retry.
- *
- * @example
- * ```ts
- * import { pruneReceipts } from '@kevinjohn/adonisjs-duplicate-request-guard'
- * import db from '@adonisjs/lucid/services/db'
- *
- * const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
- * await pruneReceipts(db.connection(), { olderThan: sevenDaysAgo })
- * ```
- */
-export async function pruneReceipts(
-  client: QueryClientContract,
-  options: PruneOptions
-): Promise<number> {
-  assertSupportedConnection(client)
-  // Throws for an invalid Date, before any query.
-  const cutoff = options.olderThan.toISOString()
-  const query = client.from(RECEIPTS_TABLE).where('state', 'completed')
-  // Stored timestamps have four-digit years. A year above 9999 is written "+YYYYYY", which sorts
-  // before them as text, yet every stored receipt is older. (A year before 0 sorts first and
-  // deletes nothing, which is also right.)
-  if (!cutoff.startsWith('+')) void query.where('updated_at', '<', cutoff)
-  return Number(await query.delete())
-}
+export const requestDeduplicator = new RequestDeduplicator()

@@ -3,7 +3,7 @@ import { AppFactory } from '@adonisjs/core/factories/app'
 import { LoggerFactory } from '@adonisjs/core/factories/logger'
 import { Emitter } from '@adonisjs/core/events'
 import { Database } from '@adonisjs/lucid/database'
-import { pruneReceipts } from '../../index.js'
+import { requestDeduplicator } from '../../index.ts'
 
 /** Another process stand-in: its own connection pruning in a loop until told to stop. */
 const { file, stop, flight } = workerData as {
@@ -29,7 +29,9 @@ let overlapped = 0
 while (Atomics.load(stop, 0) === 0) {
   const startedBefore = Atomics.load(flight, 0)
   const finishedBefore = Atomics.load(flight, 1)
-  deleted += await pruneReceipts(db.connection(), { olderThan: new Date('2100-01-01T00:00:00Z') })
+  deleted += await requestDeduplicator.pruneReceipts(db.connection(), {
+    olderThan: new Date('2100-01-01T00:00:00Z'),
+  })
   // Deduplicated work was in flight when this prune was issued, or started/finished while it ran.
   if (
     startedBefore > finishedBefore ||

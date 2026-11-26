@@ -1,6 +1,6 @@
 import { test } from '@japa/runner'
 import { Worker } from 'node:worker_threads'
-import { execute, pruneReceipts, RECEIPTS_TABLE } from '../index.js'
+import { requestDeduplicator, RECEIPTS_TABLE } from '../index.ts'
 import {
   addProof,
   countRows,
@@ -8,7 +8,7 @@ import {
   makeOperationInput,
   makeNoteOperation,
   listReceipts,
-} from './helpers.js'
+} from './helpers.ts'
 
 const N = 30
 async function seed(client: Parameters<typeof addProof>[0]) {
@@ -19,7 +19,7 @@ type Operation = ReturnType<typeof makeNoteOperation>['operation']
 const runAll = (client: Client, operation: Operation) =>
   Promise.all(
     Array.from({ length: N }, (_, i) =>
-      execute(client, operation, {
+      requestDeduplicator.execute(client, operation, {
         ...makeOperationInput(i + 1),
         authorization: { proofToken: `p${i + 1}` },
       })
@@ -33,11 +33,11 @@ test.group('pruneReceipts', () => {
     await addProof(client, 'p1')
     await addProof(client, 'p2')
     await addProof(client, 'p3')
-    await execute(client, operation, {
+    await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
-    await execute(client, operation, {
+    await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(2),
       authorization: { proofToken: 'p2' },
     })
@@ -58,14 +58,19 @@ test.group('pruneReceipts', () => {
       updated_at: '2020-01-01T00:00:00.000Z',
     })
 
-    assert.equal(await pruneReceipts(client, { olderThan: new Date('2025-01-01T00:00:00Z') }), 1)
+    assert.equal(
+      await requestDeduplicator.pruneReceipts(client, {
+        olderThan: new Date('2025-01-01T00:00:00Z'),
+      }),
+      1
+    )
     const left = await listReceipts(client)
     assert.sameMembers(
       left.map((row) => row.command_id),
       ['c2', 'stray']
     )
     // A pruned identity is fresh again.
-    const rerun = await execute(client, operation, {
+    const rerun = await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1),
       authorization: { proofToken: 'p3' },
     })
@@ -80,7 +85,9 @@ test.group('pruneReceipts', () => {
     await seed(client)
     const everything = { olderThan: new Date('2100-01-01T00:00:00Z') }
     const executes = runAll(client, operation)
-    const prunes = Promise.all(Array.from({ length: N }, () => pruneReceipts(client, everything)))
+    const prunes = Promise.all(
+      Array.from({ length: N }, () => requestDeduplicator.pruneReceipts(client, everything))
+    )
     // A deleted pending row would make completion throw E_RECEIPT_NOT_PENDING.
     const outcomes = await executes
     await prunes
@@ -96,7 +103,9 @@ test.group('pruneReceipts', () => {
     const cutoff = { olderThan: new Date(Date.now() - 1) }
     const [outcomes, deleted] = await Promise.all([
       runAll(client, operation),
-      Promise.all(Array.from({ length: N }, () => pruneReceipts(client, cutoff))),
+      Promise.all(
+        Array.from({ length: N }, () => requestDeduplicator.pruneReceipts(client, cutoff))
+      ),
     ])
     assert.isTrue(outcomes.every((outcome) => !outcome.replayed))
     assert.equal(
