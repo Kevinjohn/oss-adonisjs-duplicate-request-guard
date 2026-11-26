@@ -1,6 +1,6 @@
 # Decision gaps
 
-No separate product decision record is present. The following guide discrepancy remains unresolved; this catalogue describes the source without changing the guide or implementation.
+The [decision record](../DECISIONS.md) records a dependency policy departure; it specifies no separate operation behaviour target. The following guide discrepancy remains unresolved; this catalogue describes the source without changing the guide or implementation.
 
 | Gap    | Guide claim                                                                                                                        | Current implementation                                                                                      | Catalogue treatment                                                                            | Resolution needed                                                         |
 | ------ | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |

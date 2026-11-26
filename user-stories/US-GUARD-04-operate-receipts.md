@@ -25,14 +25,13 @@ As an application operator, I want to configure the receipt table and a supporte
 ```mermaid
 flowchart TD
     A["Operator configures one SQLite writer connection"] --> B["Run configure"]
-    B --> R{"Migrations directory readable?"}
-    R -->|Missing| L["Claim publication"]
-    R -->|Unreadable| X["Configure fails; nothing published; fix directory and rerun"]
-    X --> B
-    R -->|Yes| L
+    B --> L["Claim publication"]
     L -->|Already claimed| Z["Wait for active configure, then rerun"]
     Z --> B
-    L -->|Claim acquired| C{"Migration already published?"}
+    L -->|Claim acquired| R{"Migrations directory readable?"}
+    R -->|Missing or readable| C{"Migration already published?"}
+    R -->|Unreadable| X["Configure fails; fix directory and rerun"]
+    X --> B
     C -->|Matching entry is not a file| Y["Configure fails naming the entry; nothing published; fix entry and rerun"]
     Y --> B
     C -->|Yes| D["Existing file remains unchanged"]

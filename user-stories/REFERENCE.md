@@ -4,11 +4,12 @@
 
 - **operation caller**: host application code that has already authenticated an actor and scope, constructs an `Operation`, passes the client's `commandId` and `requestKey`, and maps package errors to a response. The package provides no UI or routes.
 - **Operation callbacks**: host callbacks in three roles. The transactional authorisation callbacks `authorizeAccess` (every call), `authorizeReplay` (replays) and `authorizeExecute` (fresh reservations) receive `{ actorId, scopeId, payload, trx }`; replay also receives a separate parsed result, and execute authorisation receives the parsed authorisation; `parseAuthorization` is fresh-only parsing of the client's opaque authorisation, synchronous and without the transaction; `work(context, authorization)` is the write, on fresh reservations only. The parser receives only raw `authorization`, not the context or transaction. The transactional callbacks and `work` must be database-only, and every callback must be safe to rerun when a transaction owner retries its callback.
-- **Transaction owner**: either `execute`, which owns one transaction and does not retry, or the host/Account Kit using `executeIn` in its existing transaction.
+- **Transaction owner**: either `requestDeduplicator.execute`, which owns one transaction and does not retry, or the host/Account Kit using `executeIn` in its existing transaction.
 - **Operator**: configures the receipts migration and SQLite connection/pool and chooses receipt retention.
 
 ## Shared source map
 
+- The shared `requestDeduplicator` instance exposes `execute`, `executeIn`, `assertSupportedConnection`, and `pruneReceipts`; these are instance methods, not standalone root exports.
 - Public exports and error symbols: [`index.ts`](../index.ts).
 - Operation/context/identity/result types: [`src/types.ts`](../src/types.ts).
 - Reservation, execution, replay, transaction checks and pruning: [`src/receipts.ts`](../src/receipts.ts).
