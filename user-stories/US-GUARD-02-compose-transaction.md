@@ -4,7 +4,7 @@ As a transaction owner, I want a deduplicated operation to share my transaction 
 
 **Status:** Current with an active transaction client; callers must await sequential operations or use supported nesting.
 **Access:** Host owns transaction (for example Account Kit `withCurrent`); only better-sqlite3, pool max 1, one Lucid connection per SQLite file.
-**Entry:** Call `executeIn(trx, operation, input)` inside the transaction callback.
+**Entry:** Call `requestDeduplicator.executeIn(trx, operation, input)` inside the transaction callback.
 **Documentation:** [README transaction contracts](../README.md#contracts)
 **Source:** [`executeIn`](../src/receipts.ts)
 **Coverage:** [`tests/nesting.spec.ts`](../tests/nesting.spec.ts), [`tests/rollback.spec.ts`](../tests/rollback.spec.ts), [`tests/connections.spec.ts`](../tests/connections.spec.ts)
@@ -58,4 +58,4 @@ flowchart TD
     C -->|Sibling, lost context or late child| H["Concurrency or unawaited error immediately"]
 ```
 
-**Code references:** [executeIn](../src/receipts.ts#L457), [descendant abort](../src/receipts.ts#L386), [savepoint and nested execution](../src/receipts.ts#L539), [shared execution and replay flow](US-GUARD-01-execute-command.md#code-flow), [Operation](../src/types.ts#L41), [ExecuteInput](../src/types.ts#L56)
+**Code references:** [executeIn](../src/receipts.ts#L708), [descendant abort](../src/receipts.ts#L328), [savepoint and nested execution](../src/receipts.ts#L442), [shared execution and replay flow](US-GUARD-01-execute-command.md#code-flow), [Operation](../src/types.ts#L41), [ExecuteInput](../src/types.ts#L56)

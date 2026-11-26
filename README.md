@@ -33,8 +33,7 @@ with a regular migration file or remove it before rerunning.
 
 If another configure run owns publication, let it finish and rerun. If it stops unexpectedly,
 confirm that no configure process is still running before removing the empty lock directory
-named in the error. Run configure processes for the same application with the same system
-temporary directory.
+named in the error. The lock is held at the application root.
 
 ## Configuration
 
@@ -51,7 +50,7 @@ process send it.
 
 ```ts
 import db from '@adonisjs/lucid/services/db'
-import { execute, type Operation } from '@kevinjohn/adonisjs-request-deduplication'
+import { requestDeduplicator, type Operation } from '@kevinjohn/adonisjs-request-deduplication'
 
 const createNote: Operation<{ body: string }, undefined, { noteId: number }> = {
   name: 'notes.create',
@@ -68,11 +67,11 @@ const createNote: Operation<{ body: string }, undefined, { noteId: number }> = {
 // In an authenticated controller, derive actorId from the signed-in user and validate the
 // request data. The client supplies the same commandId and requestKey on each retry.
 // scopeId and the operation name are host-owned; never accept them as unchecked request fields.
-return execute(db.connection(), createNote, {
+return requestDeduplicator.execute(db.connection(), createNote, {
   actorId,
   scopeId: actorId,
   payload: { body },
-  command: { commandId, requestKey },
+  requestIdentity: { commandId, requestKey },
 })
 ```
 
@@ -100,15 +99,15 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
 
 - **Database.** better-sqlite3 only. Other dialects throw `RuntimeException` before any query.
 - **Owners.** `execute` opens and commits its own transaction, once, without retrying. Inside a
-  transaction you own (for example Account Kit `withCurrent`), call `executeIn(trx, ...)`. The two
+  transaction you own (for example Account Kit `withCurrent`), call `requestDeduplicator.executeIn(trx, ...)`. The two
   are mutually exclusive: `execute` rejects a transaction client, `executeIn` requires one. Wrapping
-  either in your own retry loop is unsupported. `execute(db.connection(), ...)` called from inside
+  either in your own retry loop is unsupported. `requestDeduplicator.execute(db.connection(), ...)` called from inside
   another transaction is not detected, because the base connection is not a transaction client: the
   outer transaction holds the pool's only connection, so the call waits and fails with knex's
   acquire timeout. Pass the active transaction to `executeIn` instead.
 - **Savepoint.** Reservation and the fresh path run under a raw SQL savepoint on the caller's
   transaction, so `context.trx` is that same transaction. Operations compose: `work` may call
-  `executeIn(trx, ...)` for another operation, open `trx.transaction()`, or query `trx` directly.
+  `requestDeduplicator.executeIn(trx, ...)` for another operation, open `trx.transaction()`, or query `trx` directly.
 - **One operation at a time per transaction. Await `executeIn` before issuing any other query on
   that transaction.** Savepoints on one connection are a stack. A call is accepted only when no
   operation is open on the `trx`, or from inside the innermost open operation's own authorisation callbacks or `work`
@@ -119,7 +118,7 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
   query on `trx` while an operation is open runs inside that operation's savepoint and is lost if the
   operation fails.
 - **Aborted nested operations.** When an operation fails or unwinds while a nested operation it started is
-  still running (for example `Promise.all([executeIn(trx, child), validate()])` where `validate`
+  still running (for example `Promise.all([requestDeduplicator.executeIn(trx, child), validate()])` where `validate`
   rejects first), it marks that nested operation aborted and waits for it to settle before rolling
   back. The nested operation stops at its next checkpoint (before each of its statements, authorisation callbacks
   and `work`), and anything it wrote stays inside the parent's savepoint, so the rollback removes
@@ -145,7 +144,7 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
   `E_TRANSACTION_LOST`, and an operation still open around the failed one stops at its next
   checkpoint. The same holds when one of your own statements ended the transaction (a failed
   `INSERT OR ROLLBACK`, a raw `COMMIT`), with two limits. The package watches a Lucid connection
-  only from its first deduplicated call on it, so call `assertSupportedConnection(db.connection())` at
+  only from its first deduplicated call on it, so call `requestDeduplicator.assertSupportedConnection(db.connection())` at
   boot, and again after closing and reopening a connection, to cover transactions before that.
   And a statement issued on the transaction without awaiting the one that ended it can slip past
   the check. Your own later queries on a lost transaction autocommit.
@@ -176,7 +175,7 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
   actor using the same ids runs its own operation and learns nothing about yours. Command ids and
   request keys must be well-formed Unicode strings (no lone surrogates); others are refused with
   `E_INVALID_COMMAND_VALUE` (400) before `authorizeAccess`.
-- **Pruning.** `pruneReceipts(db.connection(), { olderThan })` deletes completed receipts updated
+- **Pruning.** `requestDeduplicator.pruneReceipts(db.connection(), { olderThan })` deletes completed receipts updated
   strictly before `olderThan`. A pruned identity executes fresh again, so keep receipts as long as
   clients may retry.
 

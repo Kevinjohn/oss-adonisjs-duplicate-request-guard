@@ -12,7 +12,7 @@ import { Database } from '@adonisjs/lucid/database'
 import { MigrationRunner } from '@adonisjs/lucid/migration'
 import { sourceFiles } from '@adonisjs/lucid/utils'
 import { configure } from '../configure.ts'
-import { execute } from '../index.ts'
+import { requestDeduplicator } from '../index.ts'
 import { makeOperationInput, makeSignal } from './helpers.ts'
 
 const PACKAGE = '@kevinjohn/adonisjs-request-deduplication'
@@ -116,8 +116,8 @@ test('configure publishes the receipts migration once, and it works', async ({ a
     }
     const input = makeOperationInput(1)
     const client = db.connection()
-    await execute(client, operation, input)
-    assert.deepEqual(await execute(client, operation, input), {
+    await requestDeduplicator.execute(client, operation, input)
+    assert.deepEqual(await requestDeduplicator.execute(client, operation, input), {
       replayed: true,
       result: { created: true },
     })
@@ -136,7 +136,10 @@ test('simultaneous configure publication is exclusive and a later run preserves 
   const publishing = makeSignal()
   const proceed = makeSignal()
   const command = {
-    app: { migrationsPath: (name = '') => join(migrationsPath, name) },
+    app: {
+      migrationsPath: () => migrationsPath,
+      makePath: (name: string) => join(root, name),
+    },
     logger: { info() {} },
     createCodemods: async () => ({
       makeUsingStub: async (
@@ -157,12 +160,22 @@ test('simultaneous configure publication is exclusive and a later run preserves 
     await assert.rejects(() => readdir(migrationsPath), /ENOENT/)
     const aliasedCommand = {
       ...command,
-      app: { migrationsPath: () => join(alias, 'migrations') },
+      app: {
+        migrationsPath: () => join(alias, 'migrations'),
+        makePath: (name: string) => join(alias, name),
+      },
     } as unknown as Configure
-    await assert.rejects(
-      () => configure(aliasedCommand),
-      /^request receipts migration publication is already claimed; .*Lock directory: .*request-receipts-configure-[a-f0-9]{64}\.lock$/
-    )
+    const originalTmpdir = process.env.TMPDIR
+    process.env.TMPDIR = root
+    try {
+      await assert.rejects(
+        () => configure(aliasedCommand),
+        /^request receipts migration publication is already claimed; .*Lock directory: .*\.request-receipts-configure\.lock$/
+      )
+    } finally {
+      if (originalTmpdir === undefined) delete process.env.TMPDIR
+      else process.env.TMPDIR = originalTmpdir
+    }
     proceed.fire()
     await first
     const files = await readdir(migrationsPath)
@@ -182,7 +195,7 @@ test('a failed publication releases the claim for a later configure', async ({ a
   try {
     let failPublication = true
     const command = {
-      app: { migrationsPath: (name = '') => join(root, name) },
+      app: { migrationsPath: () => root, makePath: (name: string) => join(root, name) },
       logger: { info() {} },
       createCodemods: async () => ({
         makeUsingStub: async (
@@ -213,7 +226,7 @@ test('configure stops when the migrations directory cannot be read', async ({ as
     await writeFile(migrationsPath, '')
     let codemodsCreated = false
     const command = {
-      app: { migrationsPath: () => migrationsPath },
+      app: { migrationsPath: () => migrationsPath, makePath: (name: string) => join(root, name) },
       logger: { info() {} },
       createCodemods: async () => {
         codemodsCreated = true
@@ -248,7 +261,7 @@ test.group('configure with an existing matching migrations entry', () => {
       run: async () => {},
     }
     const command = {
-      app: { migrationsPath: (name = '') => join(migrations, name) },
+      app: { migrationsPath: () => migrations, makePath: (name: string) => join(root, name) },
       logger: { info: (message: string) => state.logged.push(message) },
       createCodemods: async () => {
         state.codemodsCreated = true

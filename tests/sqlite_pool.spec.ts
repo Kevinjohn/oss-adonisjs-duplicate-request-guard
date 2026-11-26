@@ -5,7 +5,7 @@ import { AppFactory } from '@adonisjs/core/factories/app'
 import { LoggerFactory } from '@adonisjs/core/factories/logger'
 import { Emitter } from '@adonisjs/core/events'
 import { Database } from '@adonisjs/lucid/database'
-import { assertSupportedConnection, execute, executeIn } from '../index.ts'
+import { requestDeduplicator } from '../index.ts'
 import {
   addProof,
   createDatabase,
@@ -31,7 +31,7 @@ test.group('SQLite pool rule', () => {
       const { operation } = makeNoteOperation()
       await addProof(client, 'p1')
       assert.equal(readMaximumPoolConnectionCount(client), 1)
-      const outcome = await execute(client, operation, {
+      const outcome = await requestDeduplicator.execute(client, operation, {
         ...makeOperationInput(1),
         authorization: { proofToken: 'p1' },
       })
@@ -45,9 +45,15 @@ test.group('SQLite pool rule', () => {
     const { client } = await createDatabase({ max: 2 })
     const { operation, calls } = makeNoteOperation()
     assert.equal(readMaximumPoolConnectionCount(client), 2)
-    await assert.rejects(() => execute(client, operation, makeOperationInput(1)), RuntimeException)
     await assert.rejects(
-      () => client.transaction((trx) => executeIn(trx, operation, makeOperationInput(1))),
+      () => requestDeduplicator.execute(client, operation, makeOperationInput(1)),
+      RuntimeException
+    )
+    await assert.rejects(
+      () =>
+        client.transaction((trx) =>
+          requestDeduplicator.executeIn(trx, operation, makeOperationInput(1))
+        ),
       RuntimeException
     )
     assert.equal(calls.access, 0)
@@ -72,10 +78,13 @@ test.group('SQLite pool rule', () => {
     try {
       const client = db.connection()
       assert.equal(client.dialect.name, 'postgres')
-      assert.throws(() => assertSupportedConnection(client), /requires better-sqlite3/)
+      assert.throws(
+        () => requestDeduplicator.assertSupportedConnection(client),
+        /requires better-sqlite3/
+      )
       const { operation, calls } = makeNoteOperation()
       await assert.rejects(
-        () => execute(client, operation, makeOperationInput(1)),
+        () => requestDeduplicator.execute(client, operation, makeOperationInput(1)),
         RuntimeException
       )
       assert.equal(calls.access, 0)
@@ -104,7 +113,7 @@ test.group('SQLite writer lock', () => {
       }
     }
     try {
-      const outcome = await execute(client, operation, {
+      const outcome = await requestDeduplicator.execute(client, operation, {
         ...makeOperationInput(1),
         authorization: { proofToken: 'p1' },
       })
@@ -131,9 +140,9 @@ test.group('concurrent duplicates', () => {
       await gate
     }
     const body = { ...makeOperationInput(1), authorization: { proofToken: 'p1' } }
-    const first = execute(client, operation, body)
+    const first = requestDeduplicator.execute(client, operation, body)
     await inWork
-    const second = execute(client, operation, body)
+    const second = requestDeduplicator.execute(client, operation, body)
     await new Promise((resolve) => setTimeout(resolve, 50))
     release()
     const outcomes = await Promise.all([first, second])

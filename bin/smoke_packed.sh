@@ -48,16 +48,19 @@ for (const [key, target] of entries) {
 const root = modules['.']
 if (!root) fail('exports has no "." entry')
 const names = [
-  'execute',
-  'executeIn',
-  'pruneReceipts',
   'configure',
-  'assertSupportedConnection',
+  'requestDeduplicator',
   'RECEIPTS_TABLE',
   'errors',
 ]
 for (const name of names) {
   if (!(name in root)) fail(`root entry is missing export "${name}"`)
+}
+
+for (const method of ['execute', 'executeIn', 'pruneReceipts', 'assertSupportedConnection']) {
+  if (typeof root.requestDeduplicator[method] !== 'function') {
+    fail(`requestDeduplicator is missing method "${method}"`)
+  }
 }
 
 const { stubsRoot } = await import(pathToFileURL(join(packageDirectory, 'build/stubs/main.js')).href)

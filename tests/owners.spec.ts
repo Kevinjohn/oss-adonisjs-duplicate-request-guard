@@ -1,7 +1,7 @@
 import { InvalidArgumentsException } from '@adonisjs/core/exceptions'
 import { test } from '@japa/runner'
 import type { TransactionClientContract } from '@adonisjs/lucid/types/database'
-import { execute, executeIn } from '../index.ts'
+import { requestDeduplicator } from '../index.ts'
 import { completeReceipt } from '../src/receipts.ts'
 import {
   addProof,
@@ -19,7 +19,10 @@ test.group('transaction owners', () => {
     const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
     const outcome = await client.transaction((trx) =>
-      executeIn(trx, operation, { ...makeOperationInput(1), authorization: { proofToken: 'p1' } })
+      requestDeduplicator.executeIn(trx, operation, {
+        ...makeOperationInput(1),
+        authorization: { proofToken: 'p1' },
+      })
     )
     assert.isFalse(outcome.replayed)
   })
@@ -28,7 +31,7 @@ test.group('transaction owners', () => {
     const { client } = await createDatabase()
     const { operation } = makeNoteOperation()
     await assert.rejects(
-      () => executeIn(client as never, operation, makeOperationInput(1)),
+      () => requestDeduplicator.executeIn(client as never, operation, makeOperationInput(1)),
       InvalidArgumentsException
     )
   })
@@ -37,7 +40,10 @@ test.group('transaction owners', () => {
     const { client } = await createDatabase()
     const { operation, calls } = makeNoteOperation()
     await assert.rejects(
-      () => client.transaction((trx) => execute(trx as never, operation, makeOperationInput(1))),
+      () =>
+        client.transaction((trx) =>
+          requestDeduplicator.execute(trx as never, operation, makeOperationInput(1))
+        ),
       InvalidArgumentsException
     )
     assert.equal(calls.access, 0)
@@ -55,7 +61,10 @@ test.group('transaction owners', () => {
       if (++attempt === 1) throw Object.assign(new Error('busy'), { code: 'SQLITE_BUSY' })
     }
     const callback = (trx: TransactionClientContract) =>
-      executeIn(trx, operation, { ...makeOperationInput(1), authorization: { proofToken: 'p1' } })
+      requestDeduplicator.executeIn(trx, operation, {
+        ...makeOperationInput(1),
+        authorization: { proofToken: 'p1' },
+      })
     await assert.rejects(() => client.transaction(callback), 'busy')
     const outcome = await client.transaction(callback)
     assert.isFalse(outcome.replayed)
@@ -76,11 +85,11 @@ test.group('transaction owners', () => {
       hooks.beforeWork = async (context) => {
         hooks.beforeWork = undefined
         await assert.rejects(
-          () => executeIn(context.trx, operation, makeOperationInput(1)),
+          () => requestDeduplicator.executeIn(context.trx, operation, makeOperationInput(1)),
           errors.E_DUPLICATE_REQUEST_IN_PROGRESS
         )
       }
-      await executeIn(trx, operation, {
+      await requestDeduplicator.executeIn(trx, operation, {
         ...makeOperationInput(1),
         authorization: { proofToken: 'p1' },
       })
@@ -94,7 +103,7 @@ test.group('completion', () => {
     const { client } = await createDatabase()
     const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
-    await execute(client, operation, {
+    await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
@@ -109,7 +118,7 @@ test.group('completion', () => {
         ),
       errors.E_RECEIPT_NOT_PENDING
     )
-    const replay = await execute(client, operation, makeOperationInput(1))
+    const replay = await requestDeduplicator.execute(client, operation, makeOperationInput(1))
     assert.deepEqual(replay.result, { noteId: 1 })
   })
 

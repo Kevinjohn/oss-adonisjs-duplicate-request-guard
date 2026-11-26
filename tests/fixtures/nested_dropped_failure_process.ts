@@ -4,7 +4,7 @@ import { AppFactory } from '@adonisjs/core/factories/app'
 import { LoggerFactory } from '@adonisjs/core/factories/logger'
 import { Emitter } from '@adonisjs/core/events'
 import { Database } from '@adonisjs/lucid/database'
-import { executeIn } from '../../index.ts'
+import { requestDeduplicator } from '../../index.ts'
 import {
   addProof,
   makeAuthorizedOperationInput,
@@ -35,11 +35,15 @@ try {
   // Deliberately ignore the child promise. The child fails and settles before the parent finishes,
   // so the parent completes and no parent reports the child's failure.
   parent.hooks.afterWork = async ({ trx }) => {
-    void executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
+    void requestDeduplicator.executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
     await sleep(50)
   }
   await client.transaction(async (trx) => {
-    const outcome = await executeIn(trx, parent.operation, makeAuthorizedOperationInput(1))
+    const outcome = await requestDeduplicator.executeIn(
+      trx,
+      parent.operation,
+      makeAuthorizedOperationInput(1)
+    )
     assert.equal(outcome.replayed, false)
   })
   await setImmediate()

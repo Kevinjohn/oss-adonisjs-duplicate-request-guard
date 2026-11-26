@@ -4,7 +4,7 @@ import { AppFactory } from '@adonisjs/core/factories/app'
 import { LoggerFactory } from '@adonisjs/core/factories/logger'
 import { Emitter } from '@adonisjs/core/events'
 import { Database } from '@adonisjs/lucid/database'
-import { executeIn } from '../../index.ts'
+import { requestDeduplicator } from '../../index.ts'
 import {
   addProof,
   makeAuthorizedOperationInput,
@@ -35,18 +35,21 @@ try {
   // the grandchild stops and settles before the child unwinds, so only the parent's abort can
   // observe its rejection.
   parent.hooks.afterWork = async ({ trx }) => {
-    void executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
+    void requestDeduplicator.executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
     await sleep(30)
   }
   child.hooks.afterWork = async ({ trx }) => {
-    void executeIn(trx, grandchild.operation, makeAuthorizedOperationInput(3))
+    void requestDeduplicator.executeIn(trx, grandchild.operation, makeAuthorizedOperationInput(3))
     await sleep(200)
   }
   grandchild.hooks.beforeWork = () => sleep(80)
   await client.transaction(async (trx) => {
-    await assert.rejects(executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)), {
-      code: 'E_UNAWAITED_NESTED_COMMAND',
-    })
+    await assert.rejects(
+      requestDeduplicator.executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)),
+      {
+        code: 'E_UNAWAITED_NESTED_COMMAND',
+      }
+    )
   })
   await setImmediate()
   const receipts = await client.from('request_receipts')

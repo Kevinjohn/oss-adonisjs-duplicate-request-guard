@@ -9,7 +9,7 @@ import { Emitter } from '@adonisjs/core/events'
 import { Database } from '@adonisjs/lucid/database'
 import type { QueryClientContract } from '@adonisjs/lucid/types/database'
 import {
-  execute,
+  requestDeduplicator,
   type ExecuteInput,
   type Operation,
 } from '@kevinjohn/adonisjs-request-deduplication'
@@ -38,7 +38,7 @@ export async function verifyInference(
     },
     { ...baseInput, command: requestIdentity }
   )
-  const current = await execute(
+  const current = await requestDeduplicator.execute(
     client,
     {
       name: 'current.inferred',
@@ -129,10 +129,13 @@ try {
     command: input.requestIdentity,
   })
   assert.deepEqual(initial, { replayed: false, result: { noteId: 1 } })
-  const repeated = await execute(client, subpathOperation, { ...input, authorization: undefined })
+  const repeated = await requestDeduplicator.execute(client, subpathOperation, {
+    ...input,
+    authorization: undefined,
+  })
   assert.deepEqual(repeated, { replayed: true, result: initial.result })
   assert.deepEqual(
-    await execute(client, operation, {
+    await requestDeduplicator.execute(client, operation, {
       ...input,
       requestIdentity: { commandId: 'fresh-id', requestKey: 'fresh-key' },
     }),

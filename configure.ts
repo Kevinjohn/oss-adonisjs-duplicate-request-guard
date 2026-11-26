@@ -1,7 +1,5 @@
-import { createHash } from 'node:crypto'
-import { mkdir, readdir, realpath, rmdir } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { basename, dirname, join, sep } from 'node:path'
+import { mkdir, readdir, rmdir } from 'node:fs/promises'
+import { join, sep } from 'node:path'
 import { RuntimeException } from '@adonisjs/core/exceptions'
 import { pathToFileURL } from 'node:url'
 import { sourceFiles } from '@adonisjs/lucid/utils'
@@ -11,17 +9,6 @@ import { stubsRoot } from './stubs/main.ts'
 
 const MIGRATION_IDENTITY = '_create_request_receipts_table'
 const MIGRATION_SUFFIX = `${MIGRATION_IDENTITY}.ts`
-
-// Resolve aliases even if the migration directory is not there yet, so its creation
-// cannot change which publication claim applies to a path.
-async function resolveMigrationsPath(path: string): Promise<string> {
-  try {
-    return await realpath(path)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    return join(await resolveMigrationsPath(dirname(path)), basename(path))
-  }
-}
 
 async function hasReceiptsMigration(migrationsPath: string): Promise<boolean> {
   const entries = await readdir(migrationsPath, { withFileTypes: true, recursive: true }).catch(
@@ -46,9 +33,10 @@ async function hasReceiptsMigration(migrationsPath: string): Promise<boolean> {
 
 /** Publishes the receipts migration once, with an exclusive publication claim. */
 export async function configure(command: Configure) {
-  const migrationsPath = await resolveMigrationsPath(command.app.migrationsPath())
-  const key = createHash('sha256').update(migrationsPath).digest('hex')
-  const claim = join(tmpdir(), `request-receipts-configure-${key}.lock`)
+  const migrationsPath = command.app.migrationsPath()
+  // Anchor transient coordination at the existing app root. Codemods create the
+  // migrations directory only when they publish its first migration.
+  const claim = command.app.makePath('.request-receipts-configure.lock')
   try {
     await mkdir(claim)
   } catch (error) {

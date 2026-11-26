@@ -1,7 +1,7 @@
 import { test } from '@japa/runner'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { E_UNAWAITED_NESTED_COMMAND, executeIn } from '../index.ts'
+import { requestDeduplicator, E_UNAWAITED_NESTED_COMMAND } from '../index.ts'
 import { internalHooks } from '../src/receipts.ts'
 import {
   addProof,
@@ -33,13 +33,13 @@ test.group('operations compose on the outer transaction', () => {
     const outcome = await awaitWithDeadline(
       client.transaction(async (trx) => {
         outerOp.hooks.beforeWork = async () => {
-          const nested = await executeIn(trx, inner, {
+          const nested = await requestDeduplicator.executeIn(trx, inner, {
             ...makeOperationInput(2),
             authorization: { proofToken: 'p2' },
           })
           assert.isFalse(nested.replayed)
         }
-        return executeIn(trx, outerOp.operation, {
+        return requestDeduplicator.executeIn(trx, outerOp.operation, {
           ...makeOperationInput(1),
           authorization: { proofToken: 'p1' },
         })
@@ -66,12 +66,14 @@ test.group('operations compose on the outer transaction', () => {
     await awaitWithDeadline(
       client.transaction(async (trx) => {
         outerOp.hooks.beforeWork = async () => {
-          await executeIn(trx, inner, {
-            ...makeOperationInput(2),
-            authorization: { proofToken: 'p2' },
-          }).catch(() => null)
+          await requestDeduplicator
+            .executeIn(trx, inner, {
+              ...makeOperationInput(2),
+              authorization: { proofToken: 'p2' },
+            })
+            .catch(() => null)
         }
-        return executeIn(trx, outerOp.operation, {
+        return requestDeduplicator.executeIn(trx, outerOp.operation, {
           ...makeOperationInput(1),
           authorization: { proofToken: 'p1' },
         })
@@ -97,16 +99,18 @@ test.group('operations compose on the outer transaction', () => {
     await awaitWithDeadline(
       client.transaction(async (trx) => {
         outerOp.hooks.afterWork = async () => {
-          await executeIn(trx, inner, {
+          await requestDeduplicator.executeIn(trx, inner, {
             ...makeOperationInput(2),
             authorization: { proofToken: 'p2' },
           })
           throw new Error('outer failed after the nested operation')
         }
-        await executeIn(trx, outerOp.operation, {
-          ...makeOperationInput(1),
-          authorization: { proofToken: 'p1' },
-        }).catch(() => null)
+        await requestDeduplicator
+          .executeIn(trx, outerOp.operation, {
+            ...makeOperationInput(1),
+            authorization: { proofToken: 'p1' },
+          })
+          .catch(() => null)
       })
     )
     assert.lengthOf(await listReceipts(client), 0)
@@ -124,7 +128,7 @@ test.group('operations compose on the outer transaction', () => {
             await child.table('notes').insert({ scope_id: 's1', body: 'child transaction' })
           })
         }
-        return executeIn(trx, operation, {
+        return requestDeduplicator.executeIn(trx, operation, {
           ...makeOperationInput(1),
           authorization: { proofToken: 'p1' },
         })
@@ -142,7 +146,7 @@ test.group('operations compose on the outer transaction', () => {
         hooks.beforeWork = async () => {
           await trx.table('notes').insert({ scope_id: 's1', body: 'outer query' })
         }
-        return executeIn(trx, operation, {
+        return requestDeduplicator.executeIn(trx, operation, {
           ...makeOperationInput(1),
           authorization: { proofToken: 'p1' },
         })
@@ -168,8 +172,10 @@ test.group('siblings on one transaction are refused, never queued', () => {
     const [first, second] = await awaitWithDeadline(
       client.transaction((trx) =>
         Promise.allSettled([
-          executeIn(trx, a.operation, makeAuthorizedOperationInput(1)),
-          executeIn(trx, b.operation, makeAuthorizedOperationInput(2)).finally(bSettled.fire),
+          requestDeduplicator.executeIn(trx, a.operation, makeAuthorizedOperationInput(1)),
+          requestDeduplicator
+            .executeIn(trx, b.operation, makeAuthorizedOperationInput(2))
+            .finally(bSettled.fire),
         ])
       )
     )
@@ -187,8 +193,8 @@ test.group('siblings on one transaction are refused, never queued', () => {
     const [first, second] = await awaitWithDeadline(
       client.transaction((trx) =>
         Promise.allSettled([
-          executeIn(trx, a.operation, makeAuthorizedOperationInput(1)),
-          executeIn(trx, b.operation, makeAuthorizedOperationInput(2)),
+          requestDeduplicator.executeIn(trx, a.operation, makeAuthorizedOperationInput(1)),
+          requestDeduplicator.executeIn(trx, b.operation, makeAuthorizedOperationInput(2)),
         ])
       )
     )
@@ -215,12 +221,18 @@ test.group('siblings on one transaction are refused, never queued', () => {
     }
     const [first, second] = await awaitWithDeadline(
       client.transaction(async (trx) => {
-        const pendingA = executeIn(trx, a.operation, makeAuthorizedOperationInput(1))
+        const pendingA = requestDeduplicator.executeIn(
+          trx,
+          a.operation,
+          makeAuthorizedOperationInput(1)
+        )
         await aInWork.fired
-        const pendingB = executeIn(trx, b.operation, {
-          ...makeOperationInput(2, { actorId: 'carol' }),
-          authorization: { proofToken: 'p2' },
-        }).finally(bSettled.fire)
+        const pendingB = requestDeduplicator
+          .executeIn(trx, b.operation, {
+            ...makeOperationInput(2, { actorId: 'carol' }),
+            authorization: { proofToken: 'p2' },
+          })
+          .finally(bSettled.fire)
         return Promise.allSettled([pendingA, pendingB])
       })
     )
@@ -243,7 +255,7 @@ test.group('siblings on one transaction are refused, never queued', () => {
       client.transaction((trx) => {
         // Registered in the host's context, run when the parent's work opens the gate.
         const call = gate.fired.then(() =>
-          executeIn(trx, lost.operation, makeAuthorizedOperationInput(2))
+          requestDeduplicator.executeIn(trx, lost.operation, makeAuthorizedOperationInput(2))
         )
         parent.hooks.afterWork = async () => {
           gate.fire()
@@ -252,7 +264,7 @@ test.group('siblings on one transaction are refused, never queued', () => {
             (error: { code?: string }) => error.code ?? 'other'
           )
         }
-        return executeIn(trx, parent.operation, makeAuthorizedOperationInput(1))
+        return requestDeduplicator.executeIn(trx, parent.operation, makeAuthorizedOperationInput(1))
       })
     )
     assert.isFalse(outcome.replayed)
@@ -271,8 +283,12 @@ test.group('siblings on one transaction are refused, never queued', () => {
     }
     const [first, second] = await awaitWithDeadline(
       client.transaction((trx) => {
-        const pendingA = executeIn(trx, a.operation, makeAuthorizedOperationInput(1))
-        later = executeIn(trx, b.operation, makeAuthorizedOperationInput(2))
+        const pendingA = requestDeduplicator.executeIn(
+          trx,
+          a.operation,
+          makeAuthorizedOperationInput(1)
+        )
+        later = requestDeduplicator.executeIn(trx, b.operation, makeAuthorizedOperationInput(2))
         return Promise.allSettled([pendingA, later])
       })
     )
@@ -334,11 +350,13 @@ test.group('nested operations must be awaited', () => {
     const a = makeNamedOperation('notes.a')
     const b = makeNamedOperation('notes.b')
     outer.hooks.afterWork = async ({ trx }) => {
-      await executeIn(trx, a.operation, makeAuthorizedOperationInput(1))
-      await executeIn(trx, b.operation, makeAuthorizedOperationInput(2))
+      await requestDeduplicator.executeIn(trx, a.operation, makeAuthorizedOperationInput(1))
+      await requestDeduplicator.executeIn(trx, b.operation, makeAuthorizedOperationInput(2))
     }
     await awaitWithDeadline(
-      client.transaction((trx) => executeIn(trx, outer.operation, makeAuthorizedOperationInput(3)))
+      client.transaction((trx) =>
+        requestDeduplicator.executeIn(trx, outer.operation, makeAuthorizedOperationInput(3))
+      )
     )
     assert.deepEqual(await listReceiptStates(client), [
       ['c1', 'completed'],
@@ -367,10 +385,18 @@ test.group('nested operations must be awaited', () => {
     }
     parent.hooks.afterWork = async ({ trx }) => {
       for (let index = 2; index <= historicalCount + 1; index++) {
-        await executeIn(trx, child.operation, makeAuthorizedOperationInput(index))
+        await requestDeduplicator.executeIn(
+          trx,
+          child.operation,
+          makeAuthorizedOperationInput(index)
+        )
         completed++
       }
-      pending = executeIn(trx, child.operation, makeAuthorizedOperationInput(historicalCount + 2))
+      pending = requestDeduplicator.executeIn(
+        trx,
+        child.operation,
+        makeAuthorizedOperationInput(historicalCount + 2)
+      )
       await active.fired
       throw new Error('parent batch failed')
     }
@@ -378,7 +404,7 @@ test.group('nested operations must be awaited', () => {
     try {
       const result = await client.transaction(async (trx) => {
         const [parentResult] = await Promise.allSettled([
-          executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)),
+          requestDeduplicator.executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)),
         ])
         const [childResult] = await Promise.allSettled([pending])
         return [parentResult, childResult] as const
@@ -403,12 +429,14 @@ test.group('nested operations must be awaited', () => {
     let nested: PromiseSettledResult<unknown>[] = []
     outer.hooks.afterWork = async ({ trx }) => {
       nested = await Promise.allSettled([
-        executeIn(trx, a.operation, makeAuthorizedOperationInput(1)),
-        executeIn(trx, b.operation, makeAuthorizedOperationInput(2)),
+        requestDeduplicator.executeIn(trx, a.operation, makeAuthorizedOperationInput(1)),
+        requestDeduplicator.executeIn(trx, b.operation, makeAuthorizedOperationInput(2)),
       ])
     }
     await awaitWithDeadline(
-      client.transaction((trx) => executeIn(trx, outer.operation, makeAuthorizedOperationInput(3)))
+      client.transaction((trx) =>
+        requestDeduplicator.executeIn(trx, outer.operation, makeAuthorizedOperationInput(3))
+      )
     )
     assert.deepEqual(nested.map(readOutcomeCode), ['fulfilled', 'E_CONCURRENT_COMMAND'])
     assert.deepEqual(await listReceiptStates(client), [
@@ -426,11 +454,13 @@ test.group('nested operations must be awaited', () => {
     const child = makeNamedOperation('notes.child')
     let pending: Promise<unknown> = Promise.resolve()
     parent.hooks.afterWork = ({ trx }) => {
-      pending = executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
+      pending = requestDeduplicator.executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
     }
     const [outcome, nested] = await awaitWithDeadline(
       client
-        .transaction((trx) => executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)))
+        .transaction((trx) =>
+          requestDeduplicator.executeIn(trx, parent.operation, makeAuthorizedOperationInput(1))
+        )
         .then(
           (value) => ({ status: 'fulfilled', value }) as const,
           (reason: unknown) => ({ status: 'rejected', reason }) as const
@@ -455,7 +485,7 @@ test.group('nested operations must be awaited', () => {
     const child = makeNamedOperation('notes.child')
     let pending: Promise<unknown> = Promise.resolve()
     parent.hooks.afterWork = async ({ trx }) => {
-      pending = executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
+      pending = requestDeduplicator.executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
       await trx.table('notes').insert({ scope_id: 's1', body: 'parent write' })
     }
     child.hooks.afterWork = async () => {
@@ -465,7 +495,7 @@ test.group('nested operations must be awaited', () => {
     const host = await awaitWithDeadline(
       client.transaction(async (trx) => {
         const result = await Promise.allSettled([
-          executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)),
+          requestDeduplicator.executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)),
         ])
         return [...result, ...(await Promise.allSettled([pending]))]
       })
@@ -486,7 +516,7 @@ test.group('nested operations must be awaited', () => {
     const childInWork = makeSignal()
     let pending: Promise<unknown> = Promise.resolve()
     parent.hooks.afterWork = async ({ trx }) => {
-      pending = executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
+      pending = requestDeduplicator.executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
       await awaitOrSkip(childInWork.fired, 1000)
       throw new Error('parent failed')
     }
@@ -498,7 +528,7 @@ test.group('nested operations must be awaited', () => {
     const host = await awaitWithDeadline(
       client.transaction(async (trx) => {
         const result = await Promise.allSettled([
-          executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)),
+          requestDeduplicator.executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)),
         ])
         return [...result, ...(await Promise.allSettled([pending]))]
       })
@@ -517,14 +547,16 @@ test.group('nested operations must be awaited', () => {
     const parent = makeNamedOperation('notes.parent')
     const child = makeNamedOperation('notes.child')
     parent.hooks.afterAccess = async ({ trx }) => {
-      await executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
+      await requestDeduplicator.executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
     }
     parent.hooks.afterWork = () => {
       throw new Error('parent failed')
     }
     await awaitWithDeadline(
       client.transaction((trx) =>
-        executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)).catch(() => null)
+        requestDeduplicator
+          .executeIn(trx, parent.operation, makeAuthorizedOperationInput(1))
+          .catch(() => null)
       )
     )
     assert.deepEqual(await listReceiptStates(client), [])
@@ -539,16 +571,16 @@ test.group('nested operations must be awaited', () => {
     const parent = makeNamedOperation('notes.parent')
     const child = makeNamedOperation('notes.child')
     await client.transaction((trx) =>
-      executeIn(trx, parent.operation, makeAuthorizedOperationInput(1))
+      requestDeduplicator.executeIn(trx, parent.operation, makeAuthorizedOperationInput(1))
     )
     let pending: Promise<unknown> = Promise.resolve()
     parent.hooks.afterReplay = ({ trx }) => {
-      pending = executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
+      pending = requestDeduplicator.executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
     }
     const host = await awaitWithDeadline(
       client.transaction(async (trx) => {
         const result = await Promise.allSettled([
-          executeIn(trx, parent.operation, makeOperationInput(1)),
+          requestDeduplicator.executeIn(trx, parent.operation, makeOperationInput(1)),
         ])
         return [...result, ...(await Promise.allSettled([pending]))]
       })
@@ -567,7 +599,7 @@ test.group('nested operations must be awaited', () => {
     parent.hooks.afterWork = ({ trx }) => {
       const later = makeSignal()
       const call = later.fired.then(() =>
-        executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
+        requestDeduplicator.executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
       )
       late = () => {
         later.fire()
@@ -576,7 +608,7 @@ test.group('nested operations must be awaited', () => {
     }
     const [settled] = await awaitWithDeadline(
       client.transaction(async (trx) => {
-        await executeIn(trx, parent.operation, makeAuthorizedOperationInput(1))
+        await requestDeduplicator.executeIn(trx, parent.operation, makeAuthorizedOperationInput(1))
         return Promise.allSettled([late()])
       })
     )
@@ -602,9 +634,9 @@ test.group('host queries while an operation is open (documented rule)', () => {
     }
     await awaitWithDeadline(
       client.transaction(async (trx) => {
-        const pendingA = executeIn(trx, a.operation, makeAuthorizedOperationInput(1)).catch(
-          () => null
-        )
+        const pendingA = requestDeduplicator
+          .executeIn(trx, a.operation, makeAuthorizedOperationInput(1))
+          .catch(() => null)
         await aInWork.fired
         await trx.table('notes').insert({ scope_id: 's1', body: 'host write' })
         hostWrote.fire()
@@ -629,7 +661,9 @@ test.group('savepoint names', () => {
     }
     await awaitWithDeadline(
       client.transaction((trx) =>
-        executeIn(trx, operation, makeAuthorizedOperationInput(1)).catch(() => null)
+        requestDeduplicator
+          .executeIn(trx, operation, makeAuthorizedOperationInput(1))
+          .catch(() => null)
       )
     )
     assert.lengthOf(await listReceipts(client), 0)
@@ -654,13 +688,15 @@ test.group('no new children once an operation is closing', (group) => {
       // Runs in the parent's async context once its failure path has taken its list of children.
       internalHooks.onUnwind = () => {
         internalHooks.onUnwind = undefined
-        late = executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
+        late = requestDeduplicator.executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
       }
       throw new Error('parent failed')
     }
     const [settled] = await awaitWithDeadline(
       client.transaction(async (trx) => {
-        await executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)).catch(() => null)
+        await requestDeduplicator
+          .executeIn(trx, parent.operation, makeAuthorizedOperationInput(1))
+          .catch(() => null)
         return Promise.allSettled([late])
       })
     )
@@ -679,7 +715,7 @@ test.group('no new children once an operation is closing', (group) => {
       const child = makeNamedOperation('notes.child')
       if (replay)
         await client.transaction((trx) =>
-          executeIn(trx, parent.operation, makeAuthorizedOperationInput(1))
+          requestDeduplicator.executeIn(trx, parent.operation, makeAuthorizedOperationInput(1))
         )
       let late: Promise<unknown> = Promise.resolve()
       const outcome = await awaitWithDeadline(
@@ -687,9 +723,13 @@ test.group('no new children once an operation is closing', (group) => {
           // Runs in the parent's async context once it has started to complete or replay.
           internalHooks.onClosing = () => {
             internalHooks.onClosing = undefined
-            late = executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
+            late = requestDeduplicator.executeIn(
+              trx,
+              child.operation,
+              makeAuthorizedOperationInput(2)
+            )
           }
-          return executeIn(
+          return requestDeduplicator.executeIn(
             trx,
             parent.operation,
             replay ? makeOperationInput(1) : makeAuthorizedOperationInput(1)
@@ -721,7 +761,7 @@ test.group('an aborted branch admits and continues nothing', (group) => {
     const release = makeSignal()
     let pending: Promise<unknown> = Promise.resolve()
     parent.hooks.afterWork = async ({ trx }) => {
-      pending = executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
+      pending = requestDeduplicator.executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
       internalHooks.onUnwind = () => {
         internalHooks.onUnwind = undefined
         release.fire()
@@ -734,7 +774,7 @@ test.group('an aborted branch admits and continues nothing', (group) => {
       const host = await awaitWithDeadline(
         client.transaction(async (trx) => {
           const result = await Promise.allSettled([
-            executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)),
+            requestDeduplicator.executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)),
           ])
           return [...result, ...(await Promise.allSettled([pending]))]
         })
@@ -753,10 +793,12 @@ test.group('an aborted branch admits and continues nothing', (group) => {
     child.hooks.beforeWork = async ({ trx }) => {
       ready.fire()
       await release.fired
-      grandCode = await executeIn(trx, grandchild.operation, makeAuthorizedOperationInput(3)).then(
-        () => 'fulfilled',
-        (error: { code?: string }) => error.code ?? 'other'
-      )
+      grandCode = await requestDeduplicator
+        .executeIn(trx, grandchild.operation, makeAuthorizedOperationInput(3))
+        .then(
+          () => 'fulfilled',
+          (error: { code?: string }) => error.code ?? 'other'
+        )
     }
     const host = await run(client)
     assert.deepEqual(host.map(readOutcomeCode), ['parent failed', 'E_UNAWAITED_NESTED_COMMAND'])
@@ -771,10 +813,12 @@ test.group('an aborted branch admits and continues nothing', (group) => {
     const { child, grandchild, ready, release, run } = branch()
     let grandCode = ''
     child.hooks.beforeWork = async ({ trx }) => {
-      grandCode = await executeIn(trx, grandchild.operation, makeAuthorizedOperationInput(3)).then(
-        () => 'fulfilled',
-        (error: { code?: string }) => error.code ?? 'other'
-      )
+      grandCode = await requestDeduplicator
+        .executeIn(trx, grandchild.operation, makeAuthorizedOperationInput(3))
+        .then(
+          () => 'fulfilled',
+          (error: { code?: string }) => error.code ?? 'other'
+        )
     }
     grandchild.hooks.afterAccess = async () => {
       ready.fire()

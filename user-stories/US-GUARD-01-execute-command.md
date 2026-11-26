@@ -4,7 +4,7 @@ As an operation caller, I want to reuse the same operation identity on retries s
 
 **Status:** Current when using a supported better-sqlite3 connection and the required receipts migration.
 **Access:** Host authenticates the actor, establishes the scope, and authorises access. The operation name and actor define the receipt namespace. Replay requires a matching operation identity, scope, and payload.
-**Entry:** Host action calls `execute(client, operation, input)`; client supplies the operation identity as `commandId` and `requestKey`.
+**Entry:** Host action calls `requestDeduplicator.execute(client, operation, input)`; client supplies the operation identity as `commandId` and `requestKey`.
 **Documentation:** [README use and contracts](../README.md#usage)
 **Source:** [`execute` and reservation pipeline](../src/receipts.ts)
 **Coverage:** [`tests/execute.spec.ts`](../tests/execute.spec.ts), [`tests/values.spec.ts`](../tests/values.spec.ts)
@@ -99,4 +99,4 @@ flowchart TD
     Y --> T
 ```
 
-**Code references:** [API](../index.ts), [execute](../src/receipts.ts#L728), [Operation](../src/types.ts#L41)
+**Code references:** [API](../index.ts), [execute](../src/receipts.ts#L743), [Operation](../src/types.ts#L41)

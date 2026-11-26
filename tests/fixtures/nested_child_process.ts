@@ -4,7 +4,7 @@ import { AppFactory } from '@adonisjs/core/factories/app'
 import { LoggerFactory } from '@adonisjs/core/factories/logger'
 import { Emitter } from '@adonisjs/core/events'
 import { Database } from '@adonisjs/lucid/database'
-import { executeIn } from '../../index.ts'
+import { requestDeduplicator } from '../../index.ts'
 import {
   addProof,
   makeAuthorizedOperationInput,
@@ -30,12 +30,15 @@ try {
   const child = makeNamedOperation('notes.child')
   // Deliberately ignore the child promise. Its still-open work forces the parent to fail.
   parent.hooks.afterWork = ({ trx }) => {
-    void executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
+    void requestDeduplicator.executeIn(trx, child.operation, makeAuthorizedOperationInput(2))
   }
   await client.transaction(async (trx) => {
-    await assert.rejects(executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)), {
-      code: 'E_UNAWAITED_NESTED_COMMAND',
-    })
+    await assert.rejects(
+      requestDeduplicator.executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)),
+      {
+        code: 'E_UNAWAITED_NESTED_COMMAND',
+      }
+    )
   })
   await setImmediate()
   const receipts = await client.from('request_receipts')

@@ -1,12 +1,5 @@
 import { test } from '@japa/runner'
-import {
-  execute,
-  executeIn,
-  pruneReceipts,
-  RECEIPTS_TABLE,
-  type ExecuteInput,
-  type Operation,
-} from '../index.ts'
+import { requestDeduplicator, RECEIPTS_TABLE, type ExecuteInput, type Operation } from '../index.ts'
 import {
   addProof,
   createDatabase,
@@ -68,8 +61,10 @@ test.group('identity, ordering and retention rules', () => {
       }
       const fresh =
         owner === 'managed'
-          ? await mutateAfterDispatch(execute(client, operation, input))
-          : await client.transaction((trx) => mutateAfterDispatch(executeIn(trx, operation, input)))
+          ? await mutateAfterDispatch(requestDeduplicator.execute(client, operation, input))
+          : await client.transaction((trx) =>
+              mutateAfterDispatch(requestDeduplicator.executeIn(trx, operation, input))
+            )
 
       const identity = { actorId: original.actorId, scopeId: original.scopeId }
       assert.deepEqual(fresh, { replayed: false, result: identity })
@@ -84,8 +79,10 @@ test.group('identity, ordering and retention rules', () => {
       })
       const replay =
         owner === 'managed'
-          ? await execute(client, operation, original)
-          : await client.transaction((trx) => executeIn(trx, operation, original))
+          ? await requestDeduplicator.execute(client, operation, original)
+          : await client.transaction((trx) =>
+              requestDeduplicator.executeIn(trx, operation, original)
+            )
       assert.deepEqual(replay, { replayed: true, result: identity })
       assert.deepEqual(accessIdentities, [identity, identity])
       assert.equal(authorizationReads, 1)
@@ -99,16 +96,18 @@ test.group('identity, ordering and retention rules', () => {
     await addProof(client, 'p1')
     const failure = new Error('host payload unavailable')
     await client.transaction(async (trx) => {
-      const rejected = await executeIn(trx, operation, {
-        ...makeOperationInput(1),
-        get payload(): { body: string } {
-          throw failure
-        },
-      }).catch((error) => error)
+      const rejected = await requestDeduplicator
+        .executeIn(trx, operation, {
+          ...makeOperationInput(1),
+          get payload(): { body: string } {
+            throw failure
+          },
+        })
+        .catch((error) => error)
       assert.strictEqual(rejected, failure)
       assert.lengthOf(await listReceipts(trx), 0)
 
-      const outcome = await executeIn(trx, operation, {
+      const outcome = await requestDeduplicator.executeIn(trx, operation, {
         ...makeOperationInput(1),
         authorization: { proofToken: 'p1' },
       })
@@ -158,14 +157,14 @@ test.group('identity, ordering and retention rules', () => {
     })
 
     await client.transaction(async (trx) => {
-      const fresh = await executeIn(trx, operation, adapter)
+      const fresh = await requestDeduplicator.executeIn(trx, operation, adapter)
       assert.isFalse(fresh.replayed)
       assert.equal(authorizationReads, 1)
-      const replay = await executeIn(trx, operation, adapter)
+      const replay = await requestDeduplicator.executeIn(trx, operation, adapter)
       assert.deepEqual(replay, { replayed: true, result: fresh.result })
       assert.equal(authorizationReads, 1)
 
-      const withoutParser = await executeIn(
+      const withoutParser = await requestDeduplicator.executeIn(
         trx,
         {
           name: 'notes.without-parser',
@@ -188,7 +187,7 @@ test.group('identity, ordering and retention rules', () => {
       const rows = await trx.from(RECEIPTS_TABLE).where('command_id', 'c1')
       receiptCountBeforeReservation = rows.length
     }
-    await execute(client, operation, {
+    await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
@@ -199,13 +198,13 @@ test.group('identity, ordering and retention rules', () => {
     const { client } = await createDatabase()
     const { operation, calls } = makeNoteOperation()
     await addProof(client, 'p1')
-    await execute(client, operation, {
+    await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     await assert.rejects(
       () =>
-        execute(client, operation, {
+        requestDeduplicator.execute(client, operation, {
           ...makeOperationInput(1, { payload: { body: 'other' } }),
           authorization: 'garbage',
         }),
@@ -223,13 +222,11 @@ test.group('identity, ordering and retention rules', () => {
     let reentry: unknown
     hooks.beforeWork = async ({ trx }) => {
       hooks.beforeWork = undefined
-      reentry = await executeIn(
-        trx,
-        operation,
-        makeOperationInput(1, { payload: { body: 'other' } })
-      ).catch((e) => e)
+      reentry = await requestDeduplicator
+        .executeIn(trx, operation, makeOperationInput(1, { payload: { body: 'other' } }))
+        .catch((e) => e)
     }
-    await execute(client, operation, {
+    await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
@@ -249,15 +246,15 @@ test.group('identity, ordering and retention rules', () => {
     await addProof(client, 'p1')
     await addProof(client, 'p2', 'bob')
     await addProof(client, 'p3')
-    const a = await execute(client, operation, {
+    const a = await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
-    const b = await execute(client, operation, {
+    const b = await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1, { actorId: 'bob' }),
       authorization: { proofToken: 'p2' },
     })
-    const c = await execute(
+    const c = await requestDeduplicator.execute(
       client,
       { ...operation, name: 'notes.other' },
       { ...makeOperationInput(1), authorization: { proofToken: 'p3' } }
@@ -275,12 +272,12 @@ test.group('identity, ordering and retention rules', () => {
     await client.table('memberships').insert({ scope_id: 's1', user_id: 'c', role: 'owner' })
     await addProof(client, 'p1', 'c')
     await addProof(client, 'p2', 'b:actor:c')
-    const first = await execute(
+    const first = await requestDeduplicator.execute(
       client,
       { ...operation, name: 'a:actor:b' },
       { ...makeOperationInput(1, { actorId: 'c' }), authorization: { proofToken: 'p1' } }
     )
-    const second = await execute(
+    const second = await requestDeduplicator.execute(
       client,
       { ...operation, name: 'a' },
       { ...makeOperationInput(1, { actorId: 'b:actor:c' }), authorization: { proofToken: 'p2' } }
@@ -295,16 +292,16 @@ test.group('identity, ordering and retention rules', () => {
     const { operation } = makeNoteOperation()
     await addProof(client, 'pb', 'bob')
     await addProof(client, 'pa')
-    const bob = await execute(client, operation, {
+    const bob = await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1, { actorId: 'bob' }),
       authorization: { proofToken: 'pb' },
     })
-    const alice = await execute(client, operation, {
+    const alice = await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1),
       authorization: { proofToken: 'pa' },
     })
     assert.notDeepEqual(alice.result, bob.result)
-    const replay = await execute(client, operation, makeOperationInput(1))
+    const replay = await requestDeduplicator.execute(client, operation, makeOperationInput(1))
     assert.deepEqual(replay, { replayed: true, result: alice.result })
   })
 
@@ -318,25 +315,30 @@ test.group('identity, ordering and retention rules', () => {
       cutoff = new Date()
       await new Promise((resolve) => setTimeout(resolve, 20))
     }
-    await execute(client, operation, {
+    await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
-    assert.equal(await pruneReceipts(client, { olderThan: cutoff }), 0)
+    assert.equal(await requestDeduplicator.pruneReceipts(client, { olderThan: cutoff }), 0)
   })
 
   test('prune keeps a receipt updated exactly at the cutoff', async ({ assert }) => {
     const { client } = await createDatabase()
     const { operation } = makeNoteOperation()
     await addProof(client, 'p1')
-    await execute(client, operation, {
+    await requestDeduplicator.execute(client, operation, {
       ...makeOperationInput(1),
       authorization: { proofToken: 'p1' },
     })
     const [row] = await listReceipts(client)
-    assert.equal(await pruneReceipts(client, { olderThan: new Date(row.updated_at) }), 0)
     assert.equal(
-      await pruneReceipts(client, { olderThan: new Date(Date.parse(row.updated_at) + 1) }),
+      await requestDeduplicator.pruneReceipts(client, { olderThan: new Date(row.updated_at) }),
+      0
+    )
+    assert.equal(
+      await requestDeduplicator.pruneReceipts(client, {
+        olderThan: new Date(Date.parse(row.updated_at) + 1),
+      }),
       1
     )
   })
@@ -355,14 +357,17 @@ test.group('identity, ordering and retention rules', () => {
       [2, farthest],
     ] as const) {
       await addProof(client, `p${n}`)
-      await execute(client, operation, {
+      await requestDeduplicator.execute(client, operation, {
         ...makeOperationInput(n),
         authorization: { proofToken: `p${n}` },
       })
-      assert.equal(await pruneReceipts(client, { olderThan: bce }), 0)
-      await assert.rejects(() => pruneReceipts(client, { olderThan: new Date('nope') }), RangeError)
+      assert.equal(await requestDeduplicator.pruneReceipts(client, { olderThan: bce }), 0)
+      await assert.rejects(
+        () => requestDeduplicator.pruneReceipts(client, { olderThan: new Date('nope') }),
+        RangeError
+      )
       assert.lengthOf(await listReceipts(client), 1)
-      assert.equal(await pruneReceipts(client, { olderThan: cutoff }), 1)
+      assert.equal(await requestDeduplicator.pruneReceipts(client, { olderThan: cutoff }), 1)
       assert.lengthOf(await listReceipts(client), 0)
     }
   })
@@ -389,7 +394,7 @@ test.group('identity strings', () => {
           requestIdentity: { ...makeOperationInput(1).requestIdentity, [field]: value },
           authorization: { proofToken: 'p1' },
         } as ReturnType<typeof makeOperationInput> & { authorization: unknown }
-        const error = await execute(client, operation, request).catch((e) => e)
+        const error = await requestDeduplicator.execute(client, operation, request).catch((e) => e)
         assert.instanceOf(error, errors.E_INVALID_COMMAND_VALUE)
         assert.equal(error.status, 400)
         assert.match(error.message, /well-formed/)
@@ -415,8 +420,8 @@ test.group('identity strings', () => {
       payload: { body: 'p\uD801', ['k\uDC01']: 1 },
       requestIdentity: { commandId: 'c1', requestKey: 'k1' },
     }
-    const fresh = await execute(client, operation, request)
-    const replay = await execute(client, operation, request)
+    const fresh = await requestDeduplicator.execute(client, operation, request)
+    const replay = await requestDeduplicator.execute(client, operation, request)
     assert.isFalse(fresh.replayed)
     assert.deepEqual(replay, { replayed: true, result: fresh.result })
     assert.equal(works, 1)

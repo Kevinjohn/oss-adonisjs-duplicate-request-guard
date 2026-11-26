@@ -7,7 +7,7 @@ import BetterSqlite3 from 'better-sqlite3'
 import { makeNoteOperation } from './helpers.ts'
 import { bootKit, fixtureGuard, type KitFixture } from './kit_fixture.ts'
 
-const { executeIn, execute, RECEIPTS_TABLE } = fixtureGuard
+const { requestDeduplicator, RECEIPTS_TABLE } = fixtureGuard
 
 const makeBusyError = () => Object.assign(new Error('simulated busy'), { code: 'SQLITE_BUSY' })
 
@@ -49,7 +49,7 @@ test.group('executeIn inside Account Kit 0.8.0 authentication.withCurrent', (gro
   test('(a) withCurrent has committed when it returns', async ({ assert }) => {
     const { credential, operation, command } = await prepareDeduplicatedNotes()
     const outcome = await fixture.kit.authentication.withCurrent(credential, ({ trx }) =>
-      executeIn(trx, operation, command)
+      requestDeduplicator.executeIn(trx, operation, command)
     )
     assert.isFalse(outcome.replayed)
     // A separate connection sees only committed data.
@@ -67,7 +67,7 @@ test.group('executeIn inside Account Kit 0.8.0 authentication.withCurrent', (gro
       reader.close()
     }
     const replay = await fixture.kit.authentication.withCurrent(credential, ({ trx }) =>
-      executeIn(trx, operation, { ...command, authorization: 'garbage' })
+      requestDeduplicator.executeIn(trx, operation, { ...command, authorization: 'garbage' })
     )
     assert.deepEqual(replay, { replayed: true, result: outcome.result })
   })
@@ -82,7 +82,7 @@ test.group('executeIn inside Account Kit 0.8.0 authentication.withCurrent', (gro
     }
     const outcome = await fixture.kit.authentication.withCurrent(credential, ({ trx }) => {
       runs++
-      return executeIn(trx, operation, command)
+      return requestDeduplicator.executeIn(trx, operation, command)
     })
     assert.equal(runs, 2)
     assert.isFalse(outcome.replayed)
@@ -101,7 +101,7 @@ test.group('executeIn inside Account Kit 0.8.0 authentication.withCurrent', (gro
     const { credential, operation, calls, command, state } = await prepareDeduplicatedNotes()
     let runs = 0
     const outcome = await fixture.kit.authentication.withCurrent(credential, async ({ trx }) => {
-      const result = await executeIn(trx, operation, command)
+      const result = await requestDeduplicator.executeIn(trx, operation, command)
       if (++runs === 1) throw makeBusyError()
       return result
     })
@@ -135,7 +135,7 @@ test.group('executeIn inside Account Kit 0.8.0 authentication.withCurrent', (gro
     try {
       const pending = fixture.kit.authentication.withCurrent(credential, ({ trx }) => {
         runs++
-        return executeIn(trx, operation, command)
+        return requestDeduplicator.executeIn(trx, operation, command)
       })
       const waitForBusy = new Promise<never>((_, reject) => {
         deadline = setTimeout(
@@ -179,7 +179,9 @@ test.group('executeIn inside Account Kit 0.8.0 authentication.withCurrent', (gro
     const started = performance.now()
     try {
       const error = await fixture.kit.authentication
-        .withCurrent(credential, ({ trx }) => executeIn(trx, operation, command))
+        .withCurrent(credential, ({ trx }) =>
+          requestDeduplicator.executeIn(trx, operation, command)
+        )
         .catch((e) => e)
       assert.equal(error.code, 'SQLITE_BUSY')
       assert.closeTo(performance.now() - started, 5000, 500)
@@ -200,7 +202,7 @@ test.group('executeIn inside Account Kit 0.8.0 authentication.withCurrent', (gro
     await assert.rejects(
       () =>
         fixture.kit.authentication.withCurrent(credential, async ({ trx }) => {
-          await executeIn(trx, operation, command)
+          await requestDeduplicator.executeIn(trx, operation, command)
           throw new Error('host rejected the completed command')
         }),
       'host rejected the completed command'
@@ -212,12 +214,12 @@ test.group('executeIn inside Account Kit 0.8.0 authentication.withCurrent', (gro
     assert.equal(rolledBack.proof.used, 0)
 
     const retry = await fixture.kit.authentication.withCurrent(credential, ({ trx }) =>
-      executeIn(trx, operation, command)
+      requestDeduplicator.executeIn(trx, operation, command)
     )
     assert.isFalse(retry.replayed)
 
     const replay = await fixture.kit.authentication.withCurrent(credential, ({ trx }) =>
-      executeIn(trx, operation, command)
+      requestDeduplicator.executeIn(trx, operation, command)
     )
     assert.deepEqual(replay, { replayed: true, result: retry.result })
     assert.equal(calls.work, 2)
@@ -233,7 +235,7 @@ test.group('executeIn inside Account Kit 0.8.0 authentication.withCurrent', (gro
     await assert.rejects(
       () =>
         fixture.kit.authentication.withCurrent(credential, ({ trx }) =>
-          execute(trx as never, operation, command)
+          requestDeduplicator.execute(trx as never, operation, command)
         ),
       InvalidArgumentsException
     )

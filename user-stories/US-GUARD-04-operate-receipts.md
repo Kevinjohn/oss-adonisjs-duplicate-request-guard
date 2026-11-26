@@ -53,9 +53,8 @@ Scope: configure publication and connection validation; application migration ex
 
 ```mermaid
 flowchart TD
-    A["configure(command)"] --> B["Resolve migrations path through existing parents"]
-    B -->|Filesystem error| X["Rethrow before createCodemods"]
-    B -->|Resolved| L["Acquire exclusive claim in system temporary directory"]
+    A["configure(command)"] --> L["Acquire exclusive claim at the application root"]
+    L -->|Filesystem error| X["Rethrow before createCodemods"]
     L -->|Claim path already exists| Z["Throw publication claim error with rerun guidance"]
     L -->|Other claim error| X
     L -->|Acquired| R{"Migrations directory exists?"}
@@ -79,4 +78,4 @@ flowchart TD
     I -->|Database path cannot be inspected| Q2["Filesystem error surfaces unchanged; nothing registered"]
 ```
 
-**Code references:** [Configure hook](../configure.ts), [migration](../stubs/make/migration/create_request_receipts_table.stub), [connection check](../src/receipts.ts#L153).
+**Code references:** [Configure hook](../configure.ts), [migration](../stubs/make/migration/create_request_receipts_table.stub), [connection check](../src/receipts.ts#L642).

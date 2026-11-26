@@ -1,13 +1,7 @@
 export * as errors from './src/errors.ts'
 
 export { configure } from './configure.ts'
-export {
-  RECEIPTS_TABLE,
-  assertSupportedConnection,
-  execute,
-  executeIn,
-  pruneReceipts,
-} from './src/receipts.ts'
+export { RECEIPTS_TABLE, requestDeduplicator } from './src/receipts.ts'
 export {
   E_CONCURRENT_COMMAND,
   E_DUPLICATE_REQUEST_CONFLICT,
