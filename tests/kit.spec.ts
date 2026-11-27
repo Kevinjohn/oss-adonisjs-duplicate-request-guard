@@ -5,9 +5,9 @@ import { join } from 'node:path'
 import { test } from '@japa/runner'
 import BetterSqlite3 from 'better-sqlite3'
 import { makeNoteOperation } from './helpers.ts'
-import { bootKit, fixtureGuard, type KitFixture } from './kit_fixture.ts'
+import { bootKit, fixturePackage, type KitFixture } from './kit_fixture.ts'
 
-const { requestDeduplicator, RECEIPTS_TABLE } = fixtureGuard
+const { requestDeduplicator, RECEIPTS_TABLE } = fixturePackage
 
 const makeBusyError = () => Object.assign(new Error('simulated busy'), { code: 'SQLITE_BUSY' })
 

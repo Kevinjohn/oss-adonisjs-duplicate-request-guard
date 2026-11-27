@@ -1,7 +1,7 @@
 import { test } from '@japa/runner'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { requestDeduplicator, E_UNAWAITED_NESTED_COMMAND } from '../index.ts'
+import { requestDeduplicator, E_UNAWAITED_NESTED_OPERATION } from '../index.ts'
 import { internalHooks } from '../src/receipts.ts'
 import {
   addProof,
@@ -180,7 +180,7 @@ test.group('siblings on one transaction are refused, never queued', () => {
       )
     )
     assert.equal(readOutcomeCode(first), 'A failed')
-    assert.equal(readOutcomeCode(second), 'E_CONCURRENT_COMMAND')
+    assert.equal(readOutcomeCode(second), 'E_CONCURRENT_OPERATION')
     assert.equal(b.calls.access, 0)
     assert.deepEqual(await listReceiptStates(client), [])
   })
@@ -199,7 +199,7 @@ test.group('siblings on one transaction are refused, never queued', () => {
       )
     )
     assert.equal(readOutcomeCode(first), 'fulfilled')
-    assert.equal(readOutcomeCode(second), 'E_CONCURRENT_COMMAND')
+    assert.equal(readOutcomeCode(second), 'E_CONCURRENT_OPERATION')
     assert.deepEqual(await listReceiptStates(client), [['c1', 'completed']])
   })
 
@@ -237,7 +237,7 @@ test.group('siblings on one transaction are refused, never queued', () => {
       })
     )
     assert.equal(readOutcomeCode(first), 'A failed')
-    assert.equal(readOutcomeCode(second), 'E_CONCURRENT_COMMAND')
+    assert.equal(readOutcomeCode(second), 'E_CONCURRENT_OPERATION')
     assert.deepEqual(await listReceiptStates(client), [])
     assert.lengthOf(await client.from('memberships').where('user_id', 'carol'), 0)
   })
@@ -268,7 +268,7 @@ test.group('siblings on one transaction are refused, never queued', () => {
       })
     )
     assert.isFalse(outcome.replayed)
-    assert.equal(detachedOutcomeCode, 'E_CONCURRENT_COMMAND')
+    assert.equal(detachedOutcomeCode, 'E_CONCURRENT_OPERATION')
     assert.deepEqual(await listReceiptStates(client), [['c1', 'completed']])
   })
 
@@ -292,8 +292,8 @@ test.group('siblings on one transaction are refused, never queued', () => {
         return Promise.allSettled([pendingA, later])
       })
     )
-    assert.equal(readOutcomeCode(first), 'E_CONCURRENT_COMMAND')
-    assert.equal(readOutcomeCode(second), 'E_CONCURRENT_COMMAND')
+    assert.equal(readOutcomeCode(first), 'E_CONCURRENT_OPERATION')
+    assert.equal(readOutcomeCode(second), 'E_CONCURRENT_OPERATION')
     assert.deepEqual(await listReceiptStates(client), [])
   })
 })
@@ -411,7 +411,7 @@ test.group('nested operations must be awaited', () => {
       })
       assert.equal(completed, historicalCount)
       assert.equal(readOutcomeCode(result[0]), 'parent batch failed')
-      assert.equal(readOutcomeCode(result[1]), 'E_UNAWAITED_NESTED_COMMAND')
+      assert.equal(readOutcomeCode(result[1]), 'E_UNAWAITED_NESTED_OPERATION')
       assert.deepEqual(await listReceiptStates(client), [])
       assert.equal(await countRows(client, 'notes'), 0)
     } finally {
@@ -438,7 +438,7 @@ test.group('nested operations must be awaited', () => {
         requestDeduplicator.executeIn(trx, outer.operation, makeAuthorizedOperationInput(3))
       )
     )
-    assert.deepEqual(nested.map(readOutcomeCode), ['fulfilled', 'E_CONCURRENT_COMMAND'])
+    assert.deepEqual(nested.map(readOutcomeCode), ['fulfilled', 'E_CONCURRENT_OPERATION'])
     assert.deepEqual(await listReceiptStates(client), [
       ['c1', 'completed'],
       ['c3', 'completed'],
@@ -470,8 +470,8 @@ test.group('nested operations must be awaited', () => {
           return [result, nestedResult] as const
         })
     )
-    assert.equal(readOutcomeCode(outcome), 'E_UNAWAITED_NESTED_COMMAND')
-    assert.equal(readOutcomeCode(nested), 'E_UNAWAITED_NESTED_COMMAND')
+    assert.equal(readOutcomeCode(outcome), 'E_UNAWAITED_NESTED_OPERATION')
+    assert.equal(readOutcomeCode(nested), 'E_UNAWAITED_NESTED_OPERATION')
     assert.deepEqual(await listReceiptStates(client), [])
     assert.equal(await countRows(client, 'notes'), 0)
   })
@@ -500,8 +500,8 @@ test.group('nested operations must be awaited', () => {
         return [...result, ...(await Promise.allSettled([pending]))]
       })
     )
-    assert.equal(readOutcomeCode(host[0]), 'E_UNAWAITED_NESTED_COMMAND')
-    assert.include(['E_UNAWAITED_NESTED_COMMAND', 'child failed'], readOutcomeCode(host[1]))
+    assert.equal(readOutcomeCode(host[0]), 'E_UNAWAITED_NESTED_OPERATION')
+    assert.include(['E_UNAWAITED_NESTED_OPERATION', 'child failed'], readOutcomeCode(host[1]))
     assert.deepEqual(await listReceiptStates(client), [])
     assert.equal(await countRows(client, 'notes'), 0)
   })
@@ -534,7 +534,7 @@ test.group('nested operations must be awaited', () => {
       })
     )
     assert.equal(readOutcomeCode(host[0]), 'parent failed')
-    assert.equal(readOutcomeCode(host[1]), 'E_UNAWAITED_NESTED_COMMAND')
+    assert.equal(readOutcomeCode(host[1]), 'E_UNAWAITED_NESTED_OPERATION')
     assert.deepEqual(await listReceiptStates(client), [])
     assert.equal(await countRows(client, 'notes'), 0)
   })
@@ -585,8 +585,8 @@ test.group('nested operations must be awaited', () => {
         return [...result, ...(await Promise.allSettled([pending]))]
       })
     )
-    assert.equal(readOutcomeCode(host[0]), 'E_UNAWAITED_NESTED_COMMAND')
-    assert.equal(readOutcomeCode(host[1]), 'E_UNAWAITED_NESTED_COMMAND')
+    assert.equal(readOutcomeCode(host[0]), 'E_UNAWAITED_NESTED_OPERATION')
+    assert.equal(readOutcomeCode(host[1]), 'E_UNAWAITED_NESTED_OPERATION')
     assert.deepEqual(await listReceiptStates(client), [['c1', 'completed']])
   })
 
@@ -612,7 +612,7 @@ test.group('nested operations must be awaited', () => {
         return Promise.allSettled([late()])
       })
     )
-    assert.equal(readOutcomeCode(settled), 'E_CONCURRENT_COMMAND')
+    assert.equal(readOutcomeCode(settled), 'E_CONCURRENT_OPERATION')
     assert.deepEqual(await listReceiptStates(client), [['c1', 'completed']])
   })
 })
@@ -700,7 +700,7 @@ test.group('no new children once an operation is closing', (group) => {
         return Promise.allSettled([late])
       })
     )
-    assert.equal(readOutcomeCode(settled), 'E_UNAWAITED_NESTED_COMMAND')
+    assert.equal(readOutcomeCode(settled), 'E_UNAWAITED_NESTED_OPERATION')
     assert.deepEqual(await listReceiptStates(client), [])
     assert.equal(await countRows(client, 'notes'), 0)
   })
@@ -738,7 +738,7 @@ test.group('no new children once an operation is closing', (group) => {
       )
       const [settled] = await Promise.allSettled([late])
       assert.equal(outcome.replayed, replay)
-      assert.equal(readOutcomeCode(settled), 'E_UNAWAITED_NESTED_COMMAND')
+      assert.equal(readOutcomeCode(settled), 'E_UNAWAITED_NESTED_OPERATION')
       assert.deepEqual(await listReceiptStates(client), [['c1', 'completed']])
     })
   }
@@ -801,8 +801,8 @@ test.group('an aborted branch admits and continues nothing', (group) => {
         )
     }
     const host = await run(client)
-    assert.deepEqual(host.map(readOutcomeCode), ['parent failed', 'E_UNAWAITED_NESTED_COMMAND'])
-    assert.equal(grandCode, 'E_UNAWAITED_NESTED_COMMAND')
+    assert.deepEqual(host.map(readOutcomeCode), ['parent failed', 'E_UNAWAITED_NESTED_OPERATION'])
+    assert.equal(grandCode, 'E_UNAWAITED_NESTED_OPERATION')
     assert.equal(grandchild.calls.access, 0)
     assert.deepEqual(await listReceiptStates(client), [])
     assert.equal(await countRows(client, 'notes'), 0)
@@ -825,8 +825,8 @@ test.group('an aborted branch admits and continues nothing', (group) => {
       await release.fired
     }
     const host = await run(client)
-    assert.deepEqual(host.map(readOutcomeCode), ['parent failed', 'E_UNAWAITED_NESTED_COMMAND'])
-    assert.equal(grandCode, 'E_UNAWAITED_NESTED_COMMAND')
+    assert.deepEqual(host.map(readOutcomeCode), ['parent failed', 'E_UNAWAITED_NESTED_OPERATION'])
+    assert.equal(grandCode, 'E_UNAWAITED_NESTED_OPERATION')
     assert.equal(grandchild.calls.access, 1)
     assert.deepEqual(
       [grandchild.calls.parse, grandchild.calls.execute, grandchild.calls.work],
@@ -853,9 +853,9 @@ test.group('an aborted branch admits and continues nothing', (group) => {
     const parentError = (parentResult as PromiseRejectedResult).reason as Error
     const childError = (childResult as PromiseRejectedResult).reason as Error & { code?: string }
     assert.equal(parentError.message, 'parent failed')
-    assert.instanceOf(childError, E_UNAWAITED_NESTED_COMMAND)
+    assert.instanceOf(childError, E_UNAWAITED_NESTED_OPERATION)
     assert.deepInclude(childError, {
-      code: 'E_UNAWAITED_NESTED_COMMAND',
+      code: 'E_UNAWAITED_NESTED_OPERATION',
       status: 500,
       message: 'A nested guarded command was not awaited; both commands were rolled back',
     })

@@ -390,7 +390,7 @@ test.group('annotating the error never skips the rollback', () => {
       await trx.table('notes').insert({ scope_id: 's1', body: 'host write' })
     })
     const [child] = await Promise.allSettled([pending])
-    assert.equal(child.status === 'rejected' && child.reason.code, 'E_UNAWAITED_NESTED_COMMAND')
+    assert.equal(child.status === 'rejected' && child.reason.code, 'E_UNAWAITED_NESTED_OPERATION')
     assert.lengthOf(await listReceipts(client), 0)
     assert.equal(await countRows(client, 'notes'), 1)
   })

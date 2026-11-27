@@ -17,6 +17,10 @@
   `E_UNSAFE_SQLITE_POOL` or `E_UNSUPPORTED_DIALECT` with `RuntimeException`, imported from
   `@adonisjs/core/exceptions`. The three old exports and their named exception classes have
   been removed.
+- Rename `E_CONCURRENT_COMMAND` / `ConcurrentCommandException` to `E_CONCURRENT_OPERATION` /
+  `ConcurrentOperationException`, and `E_UNAWAITED_NESTED_COMMAND` /
+  `UnawaitedNestedCommandException` to `E_UNAWAITED_NESTED_OPERATION` /
+  `UnawaitedNestedOperationException`.
 
 ### Changed
 
@@ -56,7 +60,7 @@
 - Fixed: a dropped nested `executeIn` that failed and settled before its parent finished was
   swallowed since 0.2.0, and the parent could commit. Its rejection is unhandled again, as in
   0.1.3; a nested operation the parent reports as its failure's `cause` still raises none.
-- Changed: the "already claimed" configure error names the absolute lock directory path.
+- Changed: the "already claimed" configure exception names the absolute lock directory path.
 - Changed: a SQLite database path that cannot be inspected for any reason other than a file not
   created yet (for example a link loop, or a file used as a directory) now fails the connection
   check with that filesystem error instead of being registered under its directory's real path.
@@ -125,5 +129,5 @@ First release.
 - Plain-JSON payloads and results (`E_INVALID_COMMAND_VALUE`, `E_INVALID_COMMAND_RESULT`).
 - better-sqlite3 only, with a single-connection pool check (`E_UNSAFE_SQLITE_POOL`) and the writer
   lock taken before the first read.
-- `pruneReceipts`, typed errors, and `node ace configure` publishing the `request_receipts`
+- `pruneReceipts`, typed exceptions, and `node ace configure` publishing the `request_receipts`
   migration.

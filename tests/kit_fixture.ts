@@ -13,12 +13,12 @@ import { defineConfig as defineLimiterConfig, stores } from '@adonisjs/limiter'
 
 const packageRoot = new URL('../', import.meta.url)
 const self = '@kevinjohn/adonisjs-request-deduplication'
-const guardEntry = process.env.TEST_BUILT_GUARD === '1' ? 'build/index.js' : 'index.ts'
-export const fixtureGuard = (await import(
-  new URL(guardEntry, packageRoot).href
+const packageEntry = process.env.TEST_BUILT_GUARD === '1' ? 'build/index.js' : 'index.ts'
+export const fixturePackage = (await import(
+  new URL(packageEntry, packageRoot).href
 )) as typeof import('../index.ts')
 const importer = (specifier: string) =>
-  specifier === self ? Promise.resolve(fixtureGuard) : import(specifier)
+  specifier === self ? Promise.resolve(fixturePackage) : import(specifier)
 
 const appMigration = `import { BaseSchema } from '@adonisjs/lucid/schema'
 export default class extends BaseSchema {

@@ -64,7 +64,7 @@ test('a child aborted during reservation never parses authorization and retries 
         .executeIn(trx, parent.operation, makeOperationInput(1))
         .catch((caught) => caught)
       const childError = await childResult
-      assert.equal((childError as { code?: string }).code, 'E_UNAWAITED_NESTED_COMMAND')
+      assert.equal((childError as { code?: string }).code, 'E_UNAWAITED_NESTED_OPERATION')
       return failure
     } finally {
       trx.rawQuery = rawQuery
@@ -74,7 +74,7 @@ test('a child aborted during reservation never parses authorization and retries 
   })
 
   assert.strictEqual(error, parentError)
-  assert.equal((error.cause as { code?: string }).code, 'E_UNAWAITED_NESTED_COMMAND')
+  assert.equal((error.cause as { code?: string }).code, 'E_UNAWAITED_NESTED_OPERATION')
   assert.deepEqual(child.calls, { access: 1, parse: 0, execute: 0, work: 0, replay: 0 })
   assert.equal(await countRows(client, 'notes'), 0)
   assert.lengthOf(await listReceipts(client), 0)

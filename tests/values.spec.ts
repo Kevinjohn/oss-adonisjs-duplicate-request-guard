@@ -234,7 +234,7 @@ test.group('only plain JSON data is accepted', () => {
 })
 
 test.group('schema and value edges', () => {
-  test('a receipts table from the old stub gives a typed error, not a TypeError', async ({
+  test('a receipts table from the old stub gives a typed exception, not a TypeError', async ({
     assert,
   }) => {
     const { client } = await createDatabase()

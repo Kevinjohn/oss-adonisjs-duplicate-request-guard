@@ -3,7 +3,7 @@ export * as errors from './src/errors.ts'
 export { configure } from './configure.ts'
 export { RECEIPTS_TABLE, requestDeduplicator } from './src/receipts.ts'
 export {
-  E_CONCURRENT_COMMAND,
+  E_CONCURRENT_OPERATION,
   E_DUPLICATE_REQUEST_CONFLICT,
   E_DUPLICATE_REQUEST_IN_PROGRESS,
   E_INVALID_COMMAND_RESULT,
@@ -11,7 +11,7 @@ export {
   E_RECEIPT_NOT_PENDING,
   E_RECEIPT_SCHEMA,
   E_TRANSACTION_LOST,
-  E_UNAWAITED_NESTED_COMMAND,
+  E_UNAWAITED_NESTED_OPERATION,
 } from './src/errors.ts'
 export type {
   RequestIdentity,

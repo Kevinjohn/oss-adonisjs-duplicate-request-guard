@@ -36,7 +36,7 @@ try {
     await assert.rejects(
       requestDeduplicator.executeIn(trx, parent.operation, makeAuthorizedOperationInput(1)),
       {
-        code: 'E_UNAWAITED_NESTED_COMMAND',
+        code: 'E_UNAWAITED_NESTED_OPERATION',
       }
     )
   })
