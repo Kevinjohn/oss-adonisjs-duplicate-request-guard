@@ -20,6 +20,8 @@
 
 ### Changed
 
+- Move the release consumer smoke fixture from `examples/release-consumer` to
+  `tests/fixtures/release_consumer` and retire the `PKG-29` convention departure.
 - Configure publishes the migration through the framework codemod. It takes its publication
   lock at the application root and reports the full path if a lock is already held.
   Finish any configure run using the old release before upgrading.

@@ -3,7 +3,7 @@ import { configPkg } from '@adonisjs/eslint-config'
 export default [
   ...configPkg({
     // .claude/worktrees holds other checkouts of this repository (see .gitignore).
-    ignores: ['build/**', 'tmp/**', 'examples/**', 'stubs/**', '.claude/**'],
+    ignores: ['build/**', 'tmp/**', 'tests/fixtures/**', 'stubs/**', '.claude/**'],
   }),
   {
     rules: {
