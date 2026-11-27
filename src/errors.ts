@@ -61,7 +61,7 @@ export class ConcurrentOperationException extends Exception {
   static code = 'E_CONCURRENT_OPERATION'
   static status = 500
   static message =
-    'Another guarded command is open on this transaction; await it before starting the next one'
+    'Another deduplicated operation is open on this transaction; await it before starting the next one'
 
   constructor() {
     super()
@@ -75,7 +75,8 @@ export class ConcurrentOperationException extends Exception {
 export class UnawaitedNestedOperationException extends Exception {
   static code = 'E_UNAWAITED_NESTED_OPERATION'
   static status = 500
-  static message = 'A nested guarded command was not awaited; both commands were rolled back'
+  static message =
+    'A nested deduplicated operation was not awaited; both operations were rolled back'
 
   constructor(options?: { cause?: unknown }) {
     super(undefined, { cause: options?.cause })

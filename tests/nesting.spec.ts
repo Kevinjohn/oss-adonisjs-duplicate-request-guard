@@ -200,6 +200,10 @@ test.group('siblings on one transaction are refused, never queued', () => {
     )
     assert.equal(readOutcomeCode(first), 'fulfilled')
     assert.equal(readOutcomeCode(second), 'E_CONCURRENT_OPERATION')
+    assert.equal(
+      (second as PromiseRejectedResult).reason.message,
+      'Another deduplicated operation is open on this transaction; await it before starting the next one'
+    )
     assert.deepEqual(await listReceiptStates(client), [['c1', 'completed']])
   })
 
@@ -857,7 +861,7 @@ test.group('an aborted branch admits and continues nothing', (group) => {
     assert.deepInclude(childError, {
       code: 'E_UNAWAITED_NESTED_OPERATION',
       status: 500,
-      message: 'A nested guarded command was not awaited; both commands were rolled back',
+      message: 'A nested deduplicated operation was not awaited; both operations were rolled back',
     })
     assert.strictEqual(parentError.cause, childError)
     assert.strictEqual(childError.cause, interrupted)

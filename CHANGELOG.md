@@ -20,7 +20,7 @@
 - Rename `E_CONCURRENT_COMMAND` / `ConcurrentCommandException` to `E_CONCURRENT_OPERATION` /
   `ConcurrentOperationException`, and `E_UNAWAITED_NESTED_COMMAND` /
   `UnawaitedNestedCommandException` to `E_UNAWAITED_NESTED_OPERATION` /
-  `UnawaitedNestedOperationException`.
+  `UnawaitedNestedOperationException`. Their messages say "operation" in place of "command".
 
 ### Changed
 
