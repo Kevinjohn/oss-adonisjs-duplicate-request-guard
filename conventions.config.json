@@ -1,7 +1,0 @@
-{
-  "departures": {
-    "file": "DECISIONS.md",
-    "heading": "Departures",
-    "entries": [{ "entry": 2, "item": "TOOL-3", "path": "examples/release-consumer/tsconfig.json" }]
-  }
-}

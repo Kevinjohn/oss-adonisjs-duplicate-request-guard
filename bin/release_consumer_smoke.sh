@@ -2,7 +2,7 @@
 # Test the archive in a clean installed consumer, without Assembler.
 set -euo pipefail
 
-fixture=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../examples/release-consumer" && pwd)
+fixture=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../tests/fixtures/release_consumer" && pwd)
 consumer=$(mktemp -d)
 trap 'rm -rf -- "$consumer"' EXIT
 cp -- "$fixture/"{consumer.ts,adonisrc.ts,package.json,pnpm-workspace.yaml,tsconfig.json} "$consumer/"
