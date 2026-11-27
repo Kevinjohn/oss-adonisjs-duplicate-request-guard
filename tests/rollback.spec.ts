@@ -190,7 +190,7 @@ test.group('an aborted child never commits without its receipt', (group) => {
         })
       )
       assert.equal(parentError, 'validation failed')
-      assert.equal((parentCause as { code?: string }).code, 'E_UNAWAITED_NESTED_COMMAND')
+      assert.equal((parentCause as { code?: string }).code, 'E_UNAWAITED_NESTED_OPERATION')
       // The parent waited for the child: it had settled before the next operation ran.
       assert.isTrue(state.childSettledWhenNextRan)
       assert.equal(child.calls.work, 1)
@@ -237,7 +237,7 @@ test.group('an aborted child never commits without its receipt', (group) => {
           .catch(() => null)
       )
     )
-    assert.equal(childCode, 'E_UNAWAITED_NESTED_COMMAND')
+    assert.equal(childCode, 'E_UNAWAITED_NESTED_OPERATION')
     assert.equal(child.calls.access, 1)
     assert.deepEqual(
       [child.calls.parse, child.calls.execute, child.calls.work, child.calls.replay],

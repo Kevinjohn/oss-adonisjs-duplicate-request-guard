@@ -1,9 +1,9 @@
 import { InvalidArgumentsException, RuntimeException } from '@adonisjs/core/exceptions'
-import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { QueryClientContract, TransactionClientContract } from '@adonisjs/lucid/types/database'
+import { ConnectionWatcher, acquireBoundDriverConnection } from './connection_watcher.ts'
 import {
   E_DUPLICATE_REQUEST_CONFLICT,
   E_DUPLICATE_REQUEST_IN_PROGRESS,
@@ -11,11 +11,15 @@ import {
   E_INVALID_COMMAND_VALUE,
   E_RECEIPT_NOT_PENDING,
   E_RECEIPT_SCHEMA,
-  E_CONCURRENT_COMMAND,
-  E_UNAWAITED_NESTED_COMMAND,
+  E_UNAWAITED_NESTED_OPERATION,
   E_TRANSACTION_LOST,
 } from './errors.ts'
+import { internalHooks } from './internal_hooks.ts'
+import { OperationFrameTracker, type Frame } from './operation_frame_tracker.ts'
 import type { ExecuteInput, Operation, OperationContext, Outcome, PruneOptions } from './types.ts'
+import { writerRegistry, type LucidConnection } from './writer_registry.ts'
+
+export { internalHooks, writerRegistry }
 
 /** Table created by the published migration. */
 export const RECEIPTS_TABLE = 'request_receipts'
@@ -98,28 +102,6 @@ function assertIdentity(...identity: unknown[]) {
   }
 }
 
-/** A Lucid connection: `client` is its knex instance, unset once the connection is closed. */
-interface LucidConnection {
-  name: string
-  client?: unknown
-  once(event: 'disconnect', listener: () => void): unknown
-}
-
-/**
- * Real path of a SQLite file → the open Lucid connections that ran operations against it. Exported
- * for tests only; not re-exported from the package entry.
- */
-export const writersByDatabasePath = new Map<string, Set<LucidConnection>>()
-
-/** Forgets a closed connection, and its file once no open connection uses it. */
-function releaseWriter(file: string, connection: LucidConnection) {
-  // Lucid unsets `client` and emits 'disconnect' in one synchronous step, so the lazy sweep has not
-  // removed this connection yet: its set, and so the key, are still here.
-  const writers = writersByDatabasePath.get(file) as Set<LucidConnection>
-  writers.delete(connection)
-  if (writers.size === 0) writersByDatabasePath.delete(file)
-}
-
 /**
  * The file's real path. Only a file not created yet resolves through its directory's real path;
  * any other failure to inspect the path throws as it is, before the path is registered.
@@ -160,164 +142,6 @@ export async function completeReceipt(
   if (updatedRowCount !== 1) throw new E_RECEIPT_NOT_PENDING(commandId, updatedRowCount)
 }
 
-/** An open operation on a transaction. Its savepoint is on top of the trx's savepoint stack. */
-interface Frame {
-  trx: TransactionClientContract
-  /** Set when the enclosing operation started unwinding while this one was still open. */
-  aborted: boolean
-  /** Set once the operation completes, replays or unwinds: from then on it accepts no new child. */
-  closing: boolean
-  /** Only active nested operations, so a parent can wait for them before rolling back. */
-  children: Set<Frame>
-  parent?: Frame
-  /** The trx's driver connection, known from the operation's first checkpoint on. */
-  connection?: DriverConnection
-  /** This operation's run, settled before its parent may roll back. */
-  run?: Promise<unknown>
-  /** The promise a nested `executeIn` returned to its caller, observed once its parent reports it. */
-  returned?: Promise<unknown>
-}
-
-/** The current operation, carried through its authorisation callbacks and `work` by AsyncLocalStorage. */
-const operationFrame = new AsyncLocalStorage<Frame>()
-/** Open operations per transaction, outermost first. */
-const openFramesByTransaction = new WeakMap<TransactionClientContract, Frame[]>()
-
-/** The driver connection a transaction is bound to: better-sqlite3's Database. */
-interface DriverConnection {
-  inTransaction?: boolean
-}
-
-/** The knex client behind a Lucid connection: its pool and its query events. */
-interface KnexClient {
-  pool: { on(event: string, listener: (...args: any[]) => void): void }
-  on(event: 'query' | 'query-error' | 'query-response', listener: () => void): void
-}
-
-/**
- * Connections whose transaction SQLite ended underneath its Lucid client (`INSERT OR ROLLBACK`, a
- * busy abort). The client, and every child transaction made from it, still reports a transaction,
- * but statements now autocommit and a new savepoint is outermost, so its release commits. The mark
- * is on the connection because all of those clients share it, and it lasts until the pool
- * hands the connection to its next owner.
- */
-const lostConnections = new WeakSet<DriverConnection>()
-
-/**
- * Watched knex clients → the connection their single-connection pool last handed out, and whether
- * a statement has started inside a transaction since.
- */
-type Watch = { current?: DriverConnection; didStartTransactionQuery?: boolean }
-const watchesByKnexClient = new WeakMap<KnexClient, Watch>()
-
-/** Query and transaction clients share the dialect, which holds the query client and its connection. */
-function requireKnexClient(client: QueryClientContract | TransactionClientContract) {
-  return (
-    client.dialect as unknown as { client: { connection: { client: { client: KnexClient } } } }
-  ).client.connection.client.client
-}
-
-/**
- * Watches a connection from its first deduplicated use (or a host's `assertSupportedConnection` at boot).
- * A statement inside a transaction that leaves the driver with no open transaction is the moment
- * the transaction ended, whoever issued it; without this, a child transaction opened next would
- * reopen a transaction that looks healthy. The pool handing the connection out again clears the mark.
- */
-function watchConnection(client: QueryClientContract | TransactionClientContract) {
-  const knexClient = requireKnexClient(client)
-  if (watchesByKnexClient.has(knexClient)) return
-  const state: Watch = {}
-  watchesByKnexClient.set(knexClient, state)
-  // A connection the pool hands out carries no transaction from its previous owner.
-  knexClient.pool.on('acquireSuccess', (_id: unknown, connection: DriverConnection) => {
-    state.current = connection
-    state.didStartTransactionQuery = false
-    lostConnections.delete(connection)
-  })
-  // Only a statement that started inside a transaction can lose one: knex runs its own statements
-  // on the connection before BEGIN (`enforceForeignCheck` reads PRAGMA foreign_keys there).
-  knexClient.on('query', () => {
-    if (state.current?.inTransaction) state.didStartTransactionQuery = true
-  })
-  // After any statement, failed or not (a raw COMMIT or ROLLBACK from the host succeeds). After
-  // the owner's own final COMMIT this also fires, harmlessly: the next acquire clears the mark.
-  const markLostTransaction = () => {
-    if (state.didStartTransactionQuery && state.current?.inTransaction === false)
-      lostConnections.add(state.current)
-  }
-  knexClient.on('query-error', markLostTransaction)
-  knexClient.on('query-response', markLostTransaction)
-}
-
-/** A knex transaction always resolves its own bound connection. */
-function acquireBoundDriverConnection(trx: TransactionClientContract) {
-  return (
-    trx.knexClient as unknown as { client: { acquireConnection(): Promise<DriverConnection> } }
-  ).client.acquireConnection()
-}
-
-/**
- * Binds the operation to its connection and asks better-sqlite3 whether a transaction is still open
- * on it: a host query may have ended it before this operation started. Anything but a confirmed open
- * transaction is treated as lost.
- */
-async function bindAndAssertOpenTransaction(frame: Frame) {
-  // A transaction the host already completed no longer owns its connection: the pool may have
-  // handed it to a waiting transaction, which a mark here would refuse.
-  if (frame.trx.isCompleted) throw new E_TRANSACTION_LOST()
-  const connection = (frame.connection = await acquireBoundDriverConnection(frame.trx))
-  // The watcher may have been installed after the pool handed this connection out.
-  watchesByKnexClient.get(requireKnexClient(frame.trx))!.current = connection
-  if (connection.inTransaction !== true) lostConnections.add(connection)
-  assertLive(frame)
-}
-
-/**
- * Test-only seams, not exported from the package entry: `onClosing` runs when an operation starts to
- * complete or replay, `onUnwind` once an unwinding operation has taken its list of children.
- */
-export const internalHooks: { onClosing?: () => void; onUnwind?: () => void } = {}
-
-/**
- * Claims the transaction synchronously, before the first await. Savepoints on one connection are a
- * stack, so an operation may start only when none is open on this trx, or when the innermost open
- * operation is the caller itself (a nested call from its authorisation callbacks or `work`). Anything else (a
- * sibling, a call that lost its async context, a call from an operation that already returned) is
- * refused at once rather than queued, so it can neither corrupt the stack nor wait forever.
- */
-function claimOperationFrame(trx: TransactionClientContract): Frame {
-  const stack = openFramesByTransaction.get(trx) ?? []
-  const caller = operationFrame.getStore()
-  const innermost = stack.at(-1)
-  if (innermost !== (caller?.trx === trx ? caller : undefined)) {
-    throw new E_CONCURRENT_COMMAND()
-  }
-  // A child that arrives after its parent stopped waiting for children would outlive it; one from an
-  // aborted operation would run work that is about to be rolled back.
-  if (innermost?.closing || innermost?.aborted) throw new E_UNAWAITED_NESTED_COMMAND()
-  const frame: Frame = {
-    trx,
-    aborted: false,
-    closing: false,
-    children: new Set(),
-    parent: innermost,
-  }
-  innermost?.children.add(frame)
-  stack.push(frame)
-  openFramesByTransaction.set(trx, stack)
-  return frame
-}
-
-/** Takes the frame off the stack once its run has settled. */
-function releaseOperationFrame(frame: Frame) {
-  // claim() created the stack, and entries are never deleted.
-  const stack = openFramesByTransaction.get(frame.trx) as Frame[]
-  const index = stack.indexOf(frame)
-  if (index !== -1) stack.splice(index, 1)
-  frame.parent?.children.delete(frame)
-  frame.parent = undefined
-}
-
 /** The nested operations started under this one that are still open. */
 function listOpenChildFrames(frame: Frame) {
   return [...frame.children]
@@ -346,32 +170,9 @@ async function abortChildren(frame: Frame) {
   for (const child of openChildFrames) {
     markFrameAborted(child)
   }
-  internalHooks.onUnwind?.()
+  internalHooks.emitUnwind()
   const childRunResults = await Promise.allSettled(openChildFrames.map((child) => child.run))
   return childRunResults.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []))
-}
-
-/**
- * Checked before each of the operation's own statements and before each authorisation callback and `work`: an
- * aborted operation stops at its next checkpoint and rolls back, and so does every operation on a
- * connection whose transaction SQLite already ended. User code already running can still
- * write, but its parent waits for it, so those writes stay inside the parent's open savepoint.
- */
-function assertLive(frame: Frame) {
-  if (frame.connection && lostConnections.has(frame.connection)) {
-    throw new E_TRANSACTION_LOST()
-  }
-  if (frame.aborted) throw new E_UNAWAITED_NESTED_COMMAND()
-}
-
-/**
- * Checked before RELEASE: an operation whose nested operation is still open fails instead, and its
- * rollback takes the nested operation's work too.
- */
-function assertSettled(frame: Frame) {
-  assertLive(frame)
-  if (openFramesByTransaction.get(frame.trx)?.at(-1) !== frame)
-    throw new E_UNAWAITED_NESTED_COMMAND()
 }
 
 // Preserve the dispatch identity while leaving authorization lazy and the payload by reference.
@@ -400,92 +201,12 @@ interface TransactionRunInput<Payload, Authorization, Result> {
   onClaimed?: (frame: Frame) => void
 }
 
-async function executeInTransaction<Payload, Authorization, Result>({
-  trx,
-  operation,
-  admitInput,
-  onClaimed,
-}: TransactionRunInput<Payload, Authorization, Result>): Promise<Outcome<Result>> {
-  if (!trx.isTransaction) {
-    throw new InvalidArgumentsException('executeIn requires a transaction client')
-  }
-  requestDeduplicator.assertSupportedConnection(trx)
-  const frame = claimOperationFrame(trx)
-  onClaimed?.(frame)
-  try {
-    const admitted = admitInput()
-    // The one outcome both observers see: this call's caller and an unwinding parent, which attaches
-    // it as its error's cause.
-    frame.run = operationFrame
-      .run(frame, () => runClaimed({ trx, frame, operation, input: admitted }))
-      .catch((error: unknown) => {
-        // An enclosing operation rolled back over this one: report that, not the knock-on failure.
-        if (frame.aborted && !(error instanceof E_UNAWAITED_NESTED_COMMAND)) {
-          throw new E_UNAWAITED_NESTED_COMMAND({ cause: error })
-        }
-        throw error
-      })
-    return (await frame.run) as Outcome<Result>
-  } finally {
-    releaseOperationFrame(frame)
-  }
-}
-
 /** A claimed operation: its transaction, its frame and its admitted input. */
 interface ClaimedRunInput<Payload, Authorization, Result> {
   trx: TransactionClientContract
   frame: Frame
   operation: Operation<Payload, Authorization, Result>
   input: ExecuteInput<Payload>
-}
-
-async function runClaimed<Payload, Authorization, Result>({
-  trx,
-  frame,
-  operation,
-  input,
-}: ClaimedRunInput<Payload, Authorization, Result>): Promise<Outcome<Result>> {
-  // Take SQLite's writer lock before the first read. A deferred transaction that reads and then
-  // writes fails with SQLITE_BUSY_SNAPSHOT when another process committed in between.
-  assertLive(frame)
-  await bindAndAssertOpenTransaction(frame)
-  await trx.rawQuery(`UPDATE ${RECEIPTS_TABLE} SET id = id WHERE 0`)
-  // Validate before any authorisation callback runs: a payload that cannot be hashed faithfully is the client's error.
-  const payloadHash = createHash('sha256')
-    .update(
-      serializeCanonicalJson({ scopeId: input.scopeId, payload: input.payload }, refusePayload)
-    )
-    .digest('hex')
-  assertIdentity(input.requestIdentity.commandId, input.requestIdentity.requestKey)
-  // A JSON tuple cannot be confused across the operation/actor boundary.
-  const namespace = JSON.stringify([operation.name, input.actorId])
-
-  // A raw savepoint on the caller's transaction, not a knex child transaction: knex would make
-  // every other use of `trx` (a nested executeIn, trx.transaction()) wait for the child, forever.
-  const savepoint = `drg_${randomUUID().replaceAll('-', '')}`
-  assertLive(frame)
-  await trx.rawQuery(`SAVEPOINT ${savepoint}`)
-  try {
-    assertLive(frame)
-    await operation.authorizeAccess({
-      actorId: input.actorId,
-      scopeId: input.scopeId,
-      payload: input.payload,
-      trx,
-    })
-    const outcome = await reserveAndRun({ trx, frame, operation, input, namespace, payloadHash })
-    assertSettled(frame)
-    await trx.rawQuery(`RELEASE SAVEPOINT ${savepoint}`)
-    return outcome
-  } catch (error) {
-    // Before any await: from here on a new child would not be waited for, so claim() refuses it.
-    frame.closing = true
-    // Nested operations settle first: the rollback below then takes everything they wrote.
-    const [firstChildError] = await abortChildren(frame)
-    if (firstChildError !== undefined) attachCause(error, firstChildError)
-    await rollBack(trx, savepoint, error)
-    throw error
-  }
 }
 
 /**
@@ -527,92 +248,6 @@ interface ReservationInput<Payload, Authorization, Result> extends ClaimedRunInp
   payloadHash: string
 }
 
-async function reserveAndRun<Payload, Authorization, Result>({
-  trx,
-  frame,
-  operation,
-  input,
-  namespace,
-  payloadHash,
-}: ReservationInput<Payload, Authorization, Result>): Promise<Outcome<Result>> {
-  const context: OperationContext<Payload> = {
-    actorId: input.actorId,
-    scopeId: input.scopeId,
-    payload: input.payload,
-    trx,
-  }
-  const writtenAt = new Date().toISOString()
-  assertLive(frame)
-  // The unique indexes on (operation, command_id) and (operation, request_key) arbitrate;
-  // RETURNING yields a row only when this insert won.
-  const insertedReceipts = (await trx.rawQuery(
-    `INSERT INTO ${RECEIPTS_TABLE}
-       (id, scope_id, command_id, operation, request_key, payload_hash, state, result, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?)
-     ON CONFLICT DO NOTHING RETURNING id`,
-    [
-      randomUUID(),
-      input.scopeId,
-      input.requestIdentity.commandId,
-      namespace,
-      input.requestIdentity.requestKey,
-      payloadHash,
-      writtenAt,
-      writtenAt,
-    ]
-  )) as unknown[]
-
-  if (insertedReceipts.length === 0) {
-    assertLive(frame)
-    const matchingReceipts = await trx
-      .from(RECEIPTS_TABLE)
-      .where('operation', namespace)
-      .where((query) => {
-        void query
-          .where('command_id', input.requestIdentity.commandId)
-          .orWhere('request_key', input.requestIdentity.requestKey)
-      })
-    // The insert lost to a unique index, yet no row in this namespace matches: the table still
-    // has a unique index from an older stub (command_id across every actor).
-    if (matchingReceipts.length === 0) throw new E_RECEIPT_SCHEMA()
-    // Two matching rows always differ in command_id or request_key.
-    const row = matchingReceipts[0]
-    if (
-      row.command_id !== input.requestIdentity.commandId ||
-      row.request_key !== input.requestIdentity.requestKey ||
-      row.payload_hash !== payloadHash
-    ) {
-      throw new E_DUPLICATE_REQUEST_CONFLICT()
-    }
-    if (row.state !== 'completed') throw new E_DUPLICATE_REQUEST_IN_PROGRESS()
-    assertLive(frame)
-    // The authorisation callback gets its own copy: whatever it does to it, the caller receives the stored result.
-    await operation.authorizeReplay?.(context, JSON.parse(row.result) as Result)
-    frame.closing = true
-    internalHooks.onClosing?.()
-    return { replayed: true, result: JSON.parse(row.result) as Result }
-  }
-
-  // Fresh only, in role order: parsing of the client's opaque authorisation, the transactional
-  // authorisation callback, then the write.
-  assertLive(frame)
-  // Operation permits parser omission only when Authorization includes undefined.
-  const authorization = operation.parseAuthorization?.(input.authorization) as Authorization
-  assertLive(frame)
-  await operation.authorizeExecute?.(context, authorization)
-  assertLive(frame)
-  const result = await operation.work(context, authorization)
-  assertLive(frame)
-  frame.closing = true
-  internalHooks.onClosing?.()
-  await completeReceipt(trx, {
-    namespace,
-    commandId: input.requestIdentity.commandId,
-    serialized: serializeCanonicalJson(result, refuseResult),
-  })
-  return { replayed: false, result }
-}
-
 /**
  * Executes deduplicated operations and coordinates their receipts and transaction state.
  *
@@ -625,6 +260,218 @@ async function reserveAndRun<Payload, Authorization, Result>({
  * ```
  */
 class RequestDeduplicator {
+  #connections = new ConnectionWatcher()
+  #frames = new OperationFrameTracker()
+
+  /**
+   * Binds the operation to its connection and asks better-sqlite3 whether a transaction is still open
+   * on it: a host query may have ended it before this operation started. Anything but a confirmed open
+   * transaction is treated as lost.
+   */
+  async #bindAndAssertOpenTransaction(frame: Frame) {
+    // A transaction the host already completed no longer owns its connection: the pool may have
+    // handed it to a waiting transaction, which a mark here would refuse.
+    if (frame.trx.isCompleted) throw new E_TRANSACTION_LOST()
+    const connection = (frame.connection = await acquireBoundDriverConnection(frame.trx))
+    this.#connections.trackBoundConnection(frame.trx, connection)
+    this.#assertLive(frame)
+  }
+
+  /**
+   * Checked before each of the operation's own statements and before each authorisation callback and `work`: an
+   * aborted operation stops at its next checkpoint and rolls back, and so does every operation on a
+   * connection whose transaction SQLite already ended. User code already running can still
+   * write, but its parent waits for it, so those writes stay inside the parent's open savepoint.
+   */
+  #assertLive(frame: Frame) {
+    if (frame.connection && this.#connections.isLost(frame.connection)) {
+      throw new E_TRANSACTION_LOST()
+    }
+    if (frame.aborted) throw new E_UNAWAITED_NESTED_OPERATION()
+  }
+
+  /**
+   * Checked before RELEASE: an operation whose nested operation is still open fails instead, and its
+   * rollback takes the nested operation's work too.
+   */
+  #assertSettled(frame: Frame) {
+    this.#assertLive(frame)
+    if (!this.#frames.isInnermost(frame)) throw new E_UNAWAITED_NESTED_OPERATION()
+  }
+
+  async #executeInTransaction<Payload, Authorization, Result>({
+    trx,
+    operation,
+    admitInput,
+    onClaimed,
+  }: TransactionRunInput<Payload, Authorization, Result>): Promise<Outcome<Result>> {
+    if (!trx.isTransaction) {
+      throw new InvalidArgumentsException('executeIn requires a transaction client')
+    }
+    this.assertSupportedConnection(trx)
+    const frame = this.#frames.claim(trx)
+    onClaimed?.(frame)
+    try {
+      const admitted = admitInput()
+      // The one outcome both observers see: this call's caller and an unwinding parent, which attaches
+      // it as its error's cause.
+      frame.run = this.#frames
+        .run(frame, () => this.#runClaimed({ trx, frame, operation, input: admitted }))
+        .catch((error: unknown) => {
+          // An enclosing operation rolled back over this one: report that, not the knock-on failure.
+          if (frame.aborted && !(error instanceof E_UNAWAITED_NESTED_OPERATION)) {
+            throw new E_UNAWAITED_NESTED_OPERATION({ cause: error })
+          }
+          throw error
+        })
+      return (await frame.run) as Outcome<Result>
+    } finally {
+      this.#frames.release(frame)
+    }
+  }
+
+  async #runClaimed<Payload, Authorization, Result>({
+    trx,
+    frame,
+    operation,
+    input,
+  }: ClaimedRunInput<Payload, Authorization, Result>): Promise<Outcome<Result>> {
+    // Take SQLite's writer lock before the first read. A deferred transaction that reads and then
+    // writes fails with SQLITE_BUSY_SNAPSHOT when another process committed in between.
+    this.#assertLive(frame)
+    await this.#bindAndAssertOpenTransaction(frame)
+    await trx.rawQuery(`UPDATE ${RECEIPTS_TABLE} SET id = id WHERE 0`)
+    // Validate before any authorisation callback runs: a payload that cannot be hashed faithfully is the client's error.
+    const payloadHash = createHash('sha256')
+      .update(
+        serializeCanonicalJson({ scopeId: input.scopeId, payload: input.payload }, refusePayload)
+      )
+      .digest('hex')
+    assertIdentity(input.requestIdentity.commandId, input.requestIdentity.requestKey)
+    // A JSON tuple cannot be confused across the operation/actor boundary.
+    const namespace = JSON.stringify([operation.name, input.actorId])
+
+    // A raw savepoint on the caller's transaction, not a knex child transaction: knex would make
+    // every other use of `trx` (a nested executeIn, trx.transaction()) wait for the child, forever.
+    const savepoint = `drg_${randomUUID().replaceAll('-', '')}`
+    this.#assertLive(frame)
+    await trx.rawQuery(`SAVEPOINT ${savepoint}`)
+    try {
+      this.#assertLive(frame)
+      await operation.authorizeAccess({
+        actorId: input.actorId,
+        scopeId: input.scopeId,
+        payload: input.payload,
+        trx,
+      })
+      const outcome = await this.#reserveAndRun({
+        trx,
+        frame,
+        operation,
+        input,
+        namespace,
+        payloadHash,
+      })
+      this.#assertSettled(frame)
+      await trx.rawQuery(`RELEASE SAVEPOINT ${savepoint}`)
+      return outcome
+    } catch (error) {
+      // Before any await: from here on a new child would not be waited for, so claim() refuses it.
+      frame.closing = true
+      // Nested operations settle first: the rollback below then takes everything they wrote.
+      const [firstChildError] = await abortChildren(frame)
+      if (firstChildError !== undefined) attachCause(error, firstChildError)
+      await rollBack(trx, savepoint, error)
+      throw error
+    }
+  }
+
+  async #reserveAndRun<Payload, Authorization, Result>({
+    trx,
+    frame,
+    operation,
+    input,
+    namespace,
+    payloadHash,
+  }: ReservationInput<Payload, Authorization, Result>): Promise<Outcome<Result>> {
+    const context: OperationContext<Payload> = {
+      actorId: input.actorId,
+      scopeId: input.scopeId,
+      payload: input.payload,
+      trx,
+    }
+    const writtenAt = new Date().toISOString()
+    this.#assertLive(frame)
+    // The unique indexes on (operation, command_id) and (operation, request_key) arbitrate;
+    // RETURNING yields a row only when this insert won.
+    const insertedReceipts = (await trx.rawQuery(
+      `INSERT INTO ${RECEIPTS_TABLE}
+         (id, scope_id, command_id, operation, request_key, payload_hash, state, result, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?)
+       ON CONFLICT DO NOTHING RETURNING id`,
+      [
+        randomUUID(),
+        input.scopeId,
+        input.requestIdentity.commandId,
+        namespace,
+        input.requestIdentity.requestKey,
+        payloadHash,
+        writtenAt,
+        writtenAt,
+      ]
+    )) as unknown[]
+
+    if (insertedReceipts.length === 0) {
+      this.#assertLive(frame)
+      const matchingReceipts = await trx
+        .from(RECEIPTS_TABLE)
+        .where('operation', namespace)
+        .where((query) => {
+          void query
+            .where('command_id', input.requestIdentity.commandId)
+            .orWhere('request_key', input.requestIdentity.requestKey)
+        })
+      // The insert lost to a unique index, yet no row in this namespace matches: the table still
+      // has a unique index from an older stub (command_id across every actor).
+      if (matchingReceipts.length === 0) throw new E_RECEIPT_SCHEMA()
+      // Two matching rows always differ in command_id or request_key.
+      const row = matchingReceipts[0]
+      if (
+        row.command_id !== input.requestIdentity.commandId ||
+        row.request_key !== input.requestIdentity.requestKey ||
+        row.payload_hash !== payloadHash
+      ) {
+        throw new E_DUPLICATE_REQUEST_CONFLICT()
+      }
+      if (row.state !== 'completed') throw new E_DUPLICATE_REQUEST_IN_PROGRESS()
+      this.#assertLive(frame)
+      // The authorisation callback gets its own copy: whatever it does to it, the caller receives the stored result.
+      await operation.authorizeReplay?.(context, JSON.parse(row.result) as Result)
+      frame.closing = true
+      internalHooks.emitClosing()
+      return { replayed: true, result: JSON.parse(row.result) as Result }
+    }
+
+    // Fresh only, in role order: parsing of the client's opaque authorisation, the transactional
+    // authorisation callback, then the write.
+    this.#assertLive(frame)
+    // Operation permits parser omission only when Authorization includes undefined.
+    const authorization = operation.parseAuthorization?.(input.authorization) as Authorization
+    this.#assertLive(frame)
+    await operation.authorizeExecute?.(context, authorization)
+    this.#assertLive(frame)
+    const result = await operation.work(context, authorization)
+    this.#assertLive(frame)
+    frame.closing = true
+    internalHooks.emitClosing()
+    await completeReceipt(trx, {
+      namespace,
+      commandId: input.requestIdentity.commandId,
+      serialized: serializeCanonicalJson(result, refuseResult),
+    })
+    return { replayed: false, result }
+  }
+
   /**
    * Refuses connections the package cannot keep safe: any dialect but better-sqlite3, a pool above
    * one connection, or a second named connection on a SQLite file another connection already uses.
@@ -656,7 +503,7 @@ class RequestDeduplicator {
         `SQLite connection "${client.connectionName}" allows ${maximumConnectionCount} pooled connections; guarded commands require pool.max = 1`
       )
     }
-    watchConnection(client)
+    this.#connections.watch(client)
     // As better-sqlite3 reads it (lib/database.js): trimmed, and empty or :memory: is anonymous.
     const filename = (config.connection?.filename ?? '').trim()
     // Every anonymous connection is its own database.
@@ -665,23 +512,7 @@ class RequestDeduplicator {
     // Query and transaction clients share the dialect, which holds the query client and its connection.
     const connection = (client.dialect as unknown as { client: { connection: LucidConnection } })
       .client.connection
-    const writers = writersByDatabasePath.get(file) ?? new Set<LucidConnection>()
-    // Fallback for a close that never emitted 'disconnect' (for example a listener removed by the host).
-    for (const writer of writers) {
-      if (writer.client === undefined) writers.delete(writer)
-    }
-    const other = [...writers].find((writer) => writer !== connection)
-    if (other) {
-      throw new RuntimeException(
-        `SQLite connections "${other.name}" and "${connection.name}" share ${file}; run guarded commands through one connection`
-      )
-    }
-    if (!writers.has(connection)) {
-      writers.add(connection)
-      // Lucid emits it once the connection's pool is destroyed (manager.close, closeAll, patch).
-      connection.once('disconnect', () => releaseWriter(file, connection))
-    }
-    writersByDatabasePath.set(file, writers)
+    writerRegistry.register(file, connection)
   }
 
   /**
@@ -711,7 +542,7 @@ class RequestDeduplicator {
     input: ExecuteInput<Payload>
   ): Promise<Outcome<Result>> {
     let claimed: Frame | undefined
-    const run = executeInTransaction({
+    const run = this.#executeInTransaction({
       trx,
       operation,
       admitInput: () => snapshotInput(input),
@@ -753,7 +584,7 @@ class RequestDeduplicator {
     this.assertSupportedConnection(client)
     const admitted = snapshotInput(input)
     return client.transaction((trx) =>
-      executeInTransaction({ trx, operation, admitInput: () => admitted })
+      this.#executeInTransaction({ trx, operation, admitInput: () => admitted })
     )
   }
 

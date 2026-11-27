@@ -37,7 +37,7 @@ with a regular migration file or remove it before rerunning.
 
 If another configure run owns publication, let it finish and rerun. If it stops unexpectedly,
 confirm that no configure process is still running before removing the empty lock directory
-named in the error. The lock is held at the application root.
+named in the exception. The lock is held at the application root.
 
 ## Configuration
 
@@ -116,9 +116,9 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
   that transaction.** Savepoints on one connection are a stack. A call is accepted only when no
   operation is open on the `trx`, or from inside the innermost open operation's own authorisation callbacks or `work`
   (a nested call). A sibling (`Promise.all` on one trx), a call that lost its async context, or a
-  call from an operation that already returned is refused at once with `E_CONCURRENT_COMMAND`; it never
+  call from an operation that already returned is refused at once with `E_CONCURRENT_OPERATION`; it never
   waits. An operation that reaches completion while a nested operation it started is still open fails
-  with `E_UNAWAITED_NESTED_COMMAND` and rolls back both. The package cannot see host queries: a host
+  with `E_UNAWAITED_NESTED_OPERATION` and rolls back both. The package cannot see host queries: a host
   query on `trx` while an operation is open runs inside that operation's savepoint and is lost if the
   operation fails.
 - **Aborted nested operations.** When an operation fails or unwinds while a nested operation it started is
@@ -127,13 +127,13 @@ The order is `authorizeAccess` → reserve → replay: `authorizeReplay` | fresh
   back. The nested operation stops at its next checkpoint (before each of its statements, authorisation callbacks
   and `work`), and anything it wrote stays inside the parent's savepoint, so the rollback removes
   it: no note without a receipt, and a retry runs once. The parent rethrows its own error with the
-  nested `E_UNAWAITED_NESTED_COMMAND` as `cause`: the same error the nested call rejects with, whose
+  nested `E_UNAWAITED_NESTED_OPERATION` as `cause`: the same exception the nested call rejects with, whose
   own `cause` is the nested callback's error when it threw one. A parent error that already has a
   `cause`, or a thrown value that cannot carry one (not an `Error`, frozen, or with a read-only
   `cause`), is rethrown as it is. Committing afterwards is safe. A
   nested operation whose `work` never settles keeps its parent waiting. The abort reaches every open
   operation nested below as well. Once an operation starts to complete, replay or unwind, or is aborted,
-  it accepts no new nested operation: a late call from its context gets `E_UNAWAITED_NESTED_COMMAND`,
+  it accepts no new nested operation: a late call from its context gets `E_UNAWAITED_NESTED_OPERATION`,
   since it would outlive the operation that should have awaited it. When a parent fails because of
   a nested operation that was still open, and so reports it as `cause`, the package observes that
   nested promise, so dropping it does not additionally cause an unhandled rejection. A dropped nested
@@ -191,7 +191,7 @@ available as named imports from the package.
 
 The operation exceptions are `E_DUPLICATE_REQUEST_CONFLICT` (409),
 `E_DUPLICATE_REQUEST_IN_PROGRESS` (409, only on re-entry from the operation's own `work` or authorisation callbacks),
-`E_INVALID_COMMAND_VALUE` (400), `E_CONCURRENT_COMMAND`, `E_UNAWAITED_NESTED_COMMAND`,
+`E_INVALID_COMMAND_VALUE` (400), `E_CONCURRENT_OPERATION`, `E_UNAWAITED_NESTED_OPERATION`,
 `E_INVALID_COMMAND_RESULT`, `E_RECEIPT_NOT_PENDING`,
 `E_RECEIPT_SCHEMA` (receipts table from an older stub) and `E_TRANSACTION_LOST` (500).
 

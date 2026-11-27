@@ -57,11 +57,11 @@ export class InvalidCommandResultException extends Exception {
  * example `Promise.all` on one trx), a call that lost its async context, or a call from an
  * operation that already returned. Await each `executeIn` before starting the next one on the same trx.
  */
-export class ConcurrentCommandException extends Exception {
-  static code = 'E_CONCURRENT_COMMAND'
+export class ConcurrentOperationException extends Exception {
+  static code = 'E_CONCURRENT_OPERATION'
   static status = 500
   static message =
-    'Another guarded command is open on this transaction; await it before starting the next one'
+    'Another deduplicated operation is open on this transaction; await it before starting the next one'
 
   constructor() {
     super()
@@ -72,10 +72,11 @@ export class ConcurrentCommandException extends Exception {
  * An operation reached completion while a nested operation it started was still open, or an
  * enclosing operation rolled back over this one. Nothing from either operation is kept.
  */
-export class UnawaitedNestedCommandException extends Exception {
-  static code = 'E_UNAWAITED_NESTED_COMMAND'
+export class UnawaitedNestedOperationException extends Exception {
+  static code = 'E_UNAWAITED_NESTED_OPERATION'
   static status = 500
-  static message = 'A nested guarded command was not awaited; both commands were rolled back'
+  static message =
+    'A nested deduplicated operation was not awaited; both operations were rolled back'
 
   constructor(options?: { cause?: unknown }) {
     super(undefined, { cause: options?.cause })
@@ -132,8 +133,8 @@ export const E_RECEIPT_NOT_PENDING = ReceiptNotPendingException
 /** Alias for the incompatible receipt schema exception. */
 export const E_RECEIPT_SCHEMA = ReceiptSchemaException
 /** Alias for the concurrent operations on one transaction exception. */
-export const E_CONCURRENT_COMMAND = ConcurrentCommandException
+export const E_CONCURRENT_OPERATION = ConcurrentOperationException
 /** Alias for the unawaited nested operation exception. */
-export const E_UNAWAITED_NESTED_COMMAND = UnawaitedNestedCommandException
+export const E_UNAWAITED_NESTED_OPERATION = UnawaitedNestedOperationException
 /** Alias for the lost transaction exception. */
 export const E_TRANSACTION_LOST = TransactionLostException

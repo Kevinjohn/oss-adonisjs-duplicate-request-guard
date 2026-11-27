@@ -9,7 +9,7 @@ import { Emitter } from '@adonisjs/core/events'
 import { Database } from '@adonisjs/lucid/database'
 import * as api from '../index.ts'
 import { requestDeduplicator } from '../index.ts'
-import { writersByDatabasePath } from '../src/receipts.ts'
+import { writerRegistry } from '../src/receipts.ts'
 import {
   addProof,
   createDatabase,
@@ -86,9 +86,9 @@ test.group('shared SQLite file detection', () => {
       for (let i = 0; i < 3; i++) requestDeduplicator.assertSupportedConnection(connection)
       const lucid = db.manager.get('sqlite')?.connection
       assert.equal(lucid?.listenerCount('disconnect'), 2)
-      assert.isTrue(writersByDatabasePath.has(join(dir, `tenant${sequenceNumber}.sqlite3`)))
+      assert.isTrue(writerRegistry.has(join(dir, `tenant${sequenceNumber}.sqlite3`)))
       await db.manager.closeAll()
-      assert.isFalse(writersByDatabasePath.has(join(dir, `tenant${sequenceNumber}.sqlite3`)))
+      assert.isFalse(writerRegistry.has(join(dir, `tenant${sequenceNumber}.sqlite3`)))
     }
   })
 
@@ -207,7 +207,7 @@ test.group('shared SQLite file detection', () => {
         () => requestDeduplicator.assertSupportedConnection(db.connection()),
         /^ENOTDIR\b/
       )
-      assert.isFalse(writersByDatabasePath.has(join(realpathSync(file), 'nested.sqlite3')))
+      assert.isFalse(writerRegistry.has(join(realpathSync(file), 'nested.sqlite3')))
     } finally {
       await db.manager.closeAll()
     }
