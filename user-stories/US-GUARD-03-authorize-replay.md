@@ -4,7 +4,7 @@ As an operation caller, I want request deduplication to check current access bef
 
 **Status:** Current.
 **Access:** `authorizeAccess` runs for fresh and replay calls after initial payload validation; optional `authorizeReplay` runs on completed matching replay. Omission permits replay after access authorisation callback passes.
-**Entry:** Call `execute` or `executeIn` using the original operation namespace and identity.
+**Entry:** Call `requestDeduplicator.execute` or `requestDeduplicator.executeIn` using the original operation namespace and identity.
 **Documentation:** [README operation authorisation callback order](../README.md#usage)
 **Source:** [`reserveAndRun`](../src/receipts.ts)
 **Coverage:** [`tests/optional_authorization_callbacks.spec.ts`](../tests/optional_authorization_callbacks.spec.ts), [`tests/identity.spec.ts`](../tests/identity.spec.ts)

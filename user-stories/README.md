@@ -1,6 +1,6 @@
 # User story catalogue
 
-Source baseline: `502d549f11b193ebfdfba764c63e6cae4a6eb3d0` (0.2.3). Scope: the current public exports and operation contract, fresh execution and replay, transaction composition, concurrency/nesting failure behaviour, SQLite connection constraints, and pruning. Story status describes availability, not a test result. Test links identify supporting coverage, not a runtime result.
+Source baseline: `bd4f23ddd66740c9c16e28df5ec360d96d884bce` (main; package version 0.3.1). Scope: the current public exports and operation contract, fresh execution and replay, transaction composition, concurrency/nesting failure behaviour, SQLite connection constraints, and pruning. Story status describes availability, not a test result. Test links identify supporting coverage, not a runtime result.
 
 ## Index
 
